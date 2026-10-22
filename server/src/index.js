@@ -17,6 +17,7 @@ const rateLimit = require('express-rate-limit');
 
 const db = require('./db');
 const auth = require('./auth');
+const otp = require('./otp');
 const { getStatus, attendanceOpen } = require('./status');
 const { isValidToken, currentToken } = require('./qr');
 
@@ -31,33 +32,59 @@ const asyncSafe = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)
 // ---------- config + login ----------
 app.get('/api/config', (req, res) => {
   res.json({
-    googleClientId: process.env.GOOGLE_CLIENT_ID || null,
     domain: auth.DOMAIN,
     devLogin: auth.devLoginEnabled(),
   });
 });
 
-app.post('/api/auth/google', asyncSafe(async (req, res) => {
-  try {
-    const { email } = await auth.verifyGoogleToken(req.body.credential);
-    const token = auth.issueSession(email);
-    const user = { ...db.prepare('SELECT * FROM users WHERE email = ?').get(email),
-                   role: auth.isTeacher(email) ? 'teacher' : 'student' };
-    res.json({ token, user: auth.publicUser(user) });
-  } catch (e) {
-    res.status(401).json({ error: e.message || 'Login failed' });
-  }
-}));
+const normEmail = (b) => String(b.email || '').trim().toLowerCase();
 
-// Local testing only. Disabled unless DEV_LOGIN=1 and NODE_ENV is not "production".
-app.post('/api/auth/dev', (req, res) => {
-  if (!auth.devLoginEnabled()) return res.status(404).json({ error: 'Not found' });
-  const email = String(req.body.email || '').trim().toLowerCase();
-  if (!auth.isCollegeEmail(email)) return res.status(401).json({ error: 'Use a @' + auth.DOMAIN + ' email' });
+function sendSession(res, email) {
   const token = auth.issueSession(email);
   const user = { ...db.prepare('SELECT * FROM users WHERE email = ?').get(email),
                  role: auth.isTeacher(email) ? 'teacher' : 'student' };
   res.json({ token, user: auth.publicUser(user) });
+}
+
+// Caps code requests per IP on top of the per-email resend cooldown in otp.js.
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 30,
+  message: { error: 'Too many requests. Try again in a few minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.post('/api/auth/otp/request', otpLimiter, asyncSafe(async (req, res) => {
+  const email = normEmail(req.body);
+  if (!auth.isCollegeEmail(email)) return res.status(400).json({ error: 'Use your @' + auth.DOMAIN + ' email' });
+  try {
+    const { retryAfter } = await otp.requestOtp(email);
+    if (retryAfter) return res.status(429).json({ error: `Wait ${retryAfter}s before asking for another code`, retryAfter });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[otp] send failed:', e.message);
+    res.status(502).json({ error: 'Could not send the email. Try again shortly.' });
+  }
+}));
+
+app.post('/api/auth/otp/verify', otpLimiter, (req, res) => {
+  const email = normEmail(req.body);
+  if (!auth.isCollegeEmail(email)) return res.status(400).json({ error: 'Use your @' + auth.DOMAIN + ' email' });
+  try {
+    otp.verifyOtp(email, req.body.code);
+  } catch (e) {
+    return res.status(401).json({ error: e.message });
+  }
+  sendSession(res, email);
+});
+
+// Local testing only. Disabled unless DEV_LOGIN=1 and NODE_ENV is not "production".
+app.post('/api/auth/dev', (req, res) => {
+  if (!auth.devLoginEnabled()) return res.status(404).json({ error: 'Not found' });
+  const email = normEmail(req.body);
+  if (!auth.isCollegeEmail(email)) return res.status(401).json({ error: 'Use a @' + auth.DOMAIN + ' email' });
+  sendSession(res, email);
 });
 
 // ---------- profile ----------

@@ -1,6 +1,6 @@
 # Campus Events
 
-One web app for 3-4 events a day: students sign in with their college Google account, fill a profile once,
+One web app for 3-4 events a day: students sign in with their college email (a one-time code is mailed to them), fill a profile once,
 register for events with one tap, and mark attendance on the day by scanning a rotating QR code shown on the
 projector. Teachers get a live count and a final CSV (registered, attended, absent).
 
@@ -26,26 +26,31 @@ In `.env` set:
 - `JWT_SECRET` and `QR_SECRET`: two different random strings.
   `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 - `TEACHER_EMAILS`: comma-separated teacher emails (must end with @psgitech.ac.in).
-- `DEV_LOGIN=1`: lets you log in by typing an email, with no Google. **For testing only**; it is ignored when
+- `DEV_LOGIN=1`: lets you log in by typing an email, with no code. **For testing only**; it is ignored when
   `NODE_ENV=production`, but never leave it on for the real event.
 
 Create events either with the teacher form (log in as a teacher, "+ New event") or by editing `server/src/seed.js`
 and running `npm run seed` once (running it twice creates duplicates).
 
-Run the automated API test any time: `npm test` (39 checks, uses a throwaway database).
+Run the automated API test any time: `npm test` (46 checks, uses a throwaway database).
 
-## 2. Google Sign-In (needed for the real event)
+## 2. Email login codes (needed for the real event)
 
-1. https://console.cloud.google.com -> create a project -> APIs & Services -> **OAuth consent screen**.
-   - If your college uses Google Workspace and you can create the project inside the college account, choose
-     **Internal**: only @psgitech.ac.in accounts can sign in, no review needed.
-   - Otherwise choose **External** and **publish it to production**. While it is in "Testing" only up to 100
-     manually added test users can sign in, and you have 180 students.
-2. Credentials -> Create credentials -> **OAuth client ID** -> Web application.
-   Under **Authorized JavaScript origins** add your exact HTTPS URL (and `http://localhost:5173` for local work).
-3. Copy the Client ID into `GOOGLE_CLIENT_ID` in `.env`. No client secret is needed.
+Students type their college email, get a 6-digit code by mail, and enter it. The server checks that the email
+ends in `@psgitech.ac.in` before sending anything.
 
-The server verifies Google's signed token and checks that the email ends in `@psgitech.ac.in`.
+To send the mail from a Gmail / Google Workspace account:
+1. Turn on **2-Step Verification** for that account (myaccount.google.com -> Security).
+2. myaccount.google.com/apppasswords -> create an **App Password** (16 characters).
+3. In `.env` set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_USER=<that address>`,
+   `SMTP_PASS=<the app password>`. Optionally `MAIL_FROM="Campus Events <that address>"`.
+
+Any other SMTP provider works the same way (port 465 uses TLS, 587 uses STARTTLS). A personal Gmail account can
+send roughly 500 mails a day, which covers 180 students; use a Workspace account or a mail service if you need more.
+
+Without SMTP settings (and outside production), the code is printed in the server console, which is handy for local
+work. Codes expire after 10 minutes, allow 5 wrong tries, can be requested once a minute per email, and are stored
+only as a hash (tunable with `OTP_TTL_MINUTES`, `OTP_MAX_ATTEMPTS`, `OTP_RESEND_SECONDS`).
 
 ## 3. Deploy (HTTPS is mandatory: phone cameras are blocked on plain http)
 
@@ -61,8 +66,8 @@ Free tiers of most hosts have an **ephemeral disk**: Render's free web services,
 files on every redeploy, restart and after 15 idle minutes, which would wipe all registrations.
 Use one of:
 - **Your own laptop or a college PC** running `npm start`, exposed over HTTPS with a tunnel such as
-  `cloudflared tunnel --url http://localhost:4000` or `ngrok http 4000`. Add the printed https URL to the Google
-  authorized origins. Keep the machine awake and plugged in. (Tunnel URLs change on restart, so start it once and leave it.)
+  `cloudflared tunnel --url http://localhost:4000` or `ngrok http 4000`. Keep the machine awake and plugged in.
+  (Tunnel URLs change on restart, so start it once and leave it.)
 - A host with a **persistent disk/volume** (paid), with `DB_PATH` pointing at the disk.
 
 Whichever you pick, download each event's CSV right after it ends, and copy `event.db` as a backup.
@@ -98,7 +103,7 @@ the token for the current and previous slot and compares in constant time. Stude
 old photo stops working within about 40 seconds at most.
 
 ### server/src/auth.js
-Verifies the Google ID token with `google-auth-library`, then checks the email domain on the server. Issues a signed
+Checks the email domain on the server; `otp.js` mails and verifies the one-time code. Issues a signed
 3-day session JWT holding only the email. The role (teacher or student) is looked up from `TEACHER_EMAILS` on every
 request, so it cannot be forged from the browser. Middleware: `requireUser`, `requireTeacher`, `requireProfile`.
 
@@ -121,7 +126,7 @@ request, so it cannot be forged from the browser. Middleware: `requireUser`, `re
 - `auth.jsx`: keeps the logged-in user in context and restores it on page load.
 - `useEvents.js`: loads events every 10 s and ticks every second; it stores the difference between the server clock and
   the phone clock, so the badge flips to Live at the right second even on a phone with a wrong clock.
-- `pages/Login.jsx`: Google button (or the dev login). `Profile.jsx`: name, department, year, roll number, once.
+- `pages/Login.jsx`: email + code form (or the dev login). `Profile.jsx`: name, department, year, roll number, once.
 - `pages/Dashboard.jsx`: event cards with brochure, badge, Register / Registered, live "N checked in", Mark attendance.
 - `pages/Attend.jsx`: opens the rear camera with `html5-qrcode`, sends each scan once (a lock stops the camera's repeated
   reads of the same code), shows the result.

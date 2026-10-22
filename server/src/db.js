@@ -51,6 +51,14 @@ db.exec(`
     PRIMARY KEY (event_id, email),        -- one attendance row per student per event
     UNIQUE (event_id, device_id)          -- one phone can mark only one student per event
   );
+
+  CREATE TABLE IF NOT EXISTS login_codes (
+    email      TEXT PRIMARY KEY,          -- one live code per email; a new request replaces it
+    code_hash  TEXT    NOT NULL,          -- HMAC of the code, never the code itself
+    expires_at INTEGER NOT NULL,          -- epoch ms
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    sent_at    INTEGER NOT NULL           -- epoch ms, for the resend cooldown
+  );
 `);
 
 module.exports = db;

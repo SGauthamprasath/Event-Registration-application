@@ -1,10 +1,9 @@
 // auth.js - who is this person, and are they allowed in?
-//  * Login: Google Sign-In. The server verifies Google's signed ID token and then
-//    checks the email domain ITSELF. The browser is never trusted for this.
+//  * Login: a one-time code mailed to the college address (see otp.js). The server
+//    checks the email domain ITSELF before sending. The browser is never trusted for this.
 //  * Session: our own short JWT that carries only the email.
 //  * Role: decided on every request from the TEACHER_EMAILS list, never by the client.
 const jwt = require('jsonwebtoken');
-const { OAuth2Client } = require('google-auth-library');
 const db = require('./db');
 
 const DOMAIN = (process.env.COLLEGE_DOMAIN || 'psgitech.ac.in').toLowerCase();
@@ -18,18 +17,6 @@ const isTeacher = (email) => teacherList().includes(email.toLowerCase());
 
 const devLoginEnabled = () =>
   process.env.DEV_LOGIN === '1' && process.env.NODE_ENV !== 'production';
-
-let googleClient;
-async function verifyGoogleToken(credential) {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) throw new Error('GOOGLE_CLIENT_ID is not configured');
-  googleClient = googleClient || new OAuth2Client(clientId);
-  const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: clientId });
-  const p = ticket.getPayload();
-  if (!p.email_verified) throw new Error('Email not verified');
-  if (!isCollegeEmail(p.email)) throw new Error('Please use your @' + DOMAIN + ' account');
-  return { email: p.email.toLowerCase(), googleName: p.name || '' };
-}
 
 function issueSession(email) {
   // make sure the user row exists, then hand back a signed session token
@@ -74,6 +61,6 @@ function requireProfile(req, res, next) {
 }
 
 module.exports = {
-  DOMAIN, isCollegeEmail, isTeacher, devLoginEnabled, verifyGoogleToken,
+  DOMAIN, isCollegeEmail, isTeacher, devLoginEnabled,
   issueSession, publicUser, profileComplete, requireUser, requireTeacher, requireProfile,
 };

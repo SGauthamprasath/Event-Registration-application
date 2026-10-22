@@ -28,6 +28,23 @@ const ok = (name, cond) => { assert.ok(cond, 'FAILED: ' + name); pass++; console
   };
   const login = async (email) => (await call('POST', '/api/auth/dev', { body: { email } })).json;
 
+  // ---- email OTP login (fake mailbox instead of SMTP)
+  const inbox = {};
+  require('../src/otp').setSender(async (email, code) => { inbox[email] = code; });
+  const req = (email) => call('POST', '/api/auth/otp/request', { body: { email } });
+  const ver = (email, code) => call('POST', '/api/auth/otp/verify', { body: { email, code } });
+  ok('otp: non-college email rejected', (await req('x@gmail.com')).status === 400);
+  ok('otp: code sent', (await req('Dave@psgitech.ac.in')).status === 200 && /^\d{6}$/.test(inbox['dave@psgitech.ac.in']));
+  ok('otp: resend too soon -> 429', (await req('dave@psgitech.ac.in')).status === 429);
+  const wrong = inbox['dave@psgitech.ac.in'] === '000000' ? '111111' : '000000';
+  ok('otp: wrong code rejected', (await ver('dave@psgitech.ac.in', wrong)).status === 401);
+  const good = await ver('dave@psgitech.ac.in', inbox['dave@psgitech.ac.in']);
+  ok('otp: right code logs in', good.status === 200 && good.json.token && good.json.user.email === 'dave@psgitech.ac.in');
+  ok('otp: code cannot be reused', (await ver('dave@psgitech.ac.in', inbox['dave@psgitech.ac.in'])).status === 401);
+  await req('eve@psgitech.ac.in');
+  for (let i = 0; i < 5; i++) await ver('eve@psgitech.ac.in', 'abcdef');
+  ok('otp: locked after 5 wrong tries', (await ver('eve@psgitech.ac.in', inbox['eve@psgitech.ac.in'])).status === 401);
+
   // ---- login & roles
   const bad = await call('POST', '/api/auth/dev', { body: { email: 'x@gmail.com' } });
   ok('non-college email rejected', bad.status === 401);
