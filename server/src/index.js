@@ -18,7 +18,7 @@ const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const supabase = require('./supabase');
 const auth = require('./auth');
 const { getStatus, attendanceOpen } = require('./status');
-const { isValidToken, currentToken } = require('./qr');
+const { checkToken, currentToken } = require('./qr');
 
 const app = express();
 app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
@@ -59,6 +59,7 @@ app.put('/api/me', requireUser, asyncSafe(async (req, res) => {
     if (error.code === UNIQUE_VIOLATION) return res.status(409).json({ error: 'That roll number is already used by another account' });
     throw error;
   }
+  if (data) auth.setCachedProfile(data);
   res.json({ user: auth.publicUser(data || req.user, req.user.role) });
 }));
 
@@ -91,25 +92,49 @@ function parseEventBody(b) {
   };
 }
 
+// Events + per-event counts are the same for every user, so they are loaded once and shared
+// for SNAPSHOT_MS instead of once per request (180 phones polling). Concurrent callers share one
+// in-flight load. Teacher edits drop the snapshot at once; counts may lag by up to SNAPSHOT_MS.
+// Counts use count queries: selecting every row stops at Supabase's 1000-row limit.
+const SNAPSHOT_MS = 5000;
+let snapshot = null; // { at, promise }
+
+async function loadSnapshot() {
+  const { data: events, error } = await supabase.from('events').select('*').order('starts_at');
+  if (error) throw error;
+  const count = (table, id) => supabase.from(table).select('*', { count: 'exact', head: true }).eq('event_id', id)
+    .then(({ count: n, error: e }) => { if (e) throw e; return n || 0; });
+  const counts = await Promise.all(events.map((e) => Promise.all([count('registrations', e.id), count('attendance', e.id)])));
+  const regCount = new Map(), attCount = new Map();
+  events.forEach((e, i) => { regCount.set(e.id, counts[i][0]); attCount.set(e.id, counts[i][1]); });
+  return { events, regCount, attCount };
+}
+
+function getSnapshot() {
+  if (!snapshot || Date.now() - snapshot.at > SNAPSHOT_MS) {
+    const promise = loadSnapshot();
+    snapshot = { at: Date.now(), promise };
+    promise.catch(() => { if (snapshot?.promise === promise) snapshot = null; });
+  }
+  return snapshot.promise;
+}
+const dropSnapshot = () => { snapshot = null; };
+
 async function getEvent(id) {
-  const { data } = await supabase.from('events').select('*').eq('id', Number(id)).maybeSingle();
-  return data || null;
+  const { events } = await getSnapshot();
+  return events.find((e) => e.id === Number(id)) || null;
 }
 
 app.get('/api/events', requireUser, asyncSafe(async (req, res) => {
   const now = Date.now();
   const email = req.user.email;
-  const [{ data: events = [] }, { data: mineReg = [] }, { data: mineAttend = [] }, { data: allReg = [] }, { data: allAttend = [] }] = await Promise.all([
-    supabase.from('events').select('*').order('starts_at'),
+  const [{ events, regCount, attCount }, { data: mineReg = [] }, { data: mineAttend = [] }] = await Promise.all([
+    getSnapshot(),
     supabase.from('registrations').select('event_id').eq('email', email),
     supabase.from('attendance').select('event_id').eq('email', email),
-    supabase.from('registrations').select('event_id'),
-    supabase.from('attendance').select('event_id'),
   ]);
   const regSet = new Set(mineReg.map((r) => r.event_id));
   const attSet = new Set(mineAttend.map((r) => r.event_id));
-  const regCount = new Map(); for (const r of allReg) regCount.set(r.event_id, (regCount.get(r.event_id) || 0) + 1);
-  const attCount = new Map(); for (const r of allAttend) attCount.set(r.event_id, (attCount.get(r.event_id) || 0) + 1);
 
   res.json({
     serverTime: now,
@@ -130,6 +155,7 @@ app.post('/api/events', requireTeacher, asyncSafe(async (req, res) => {
   if (error) return res.status(400).json({ error });
   const { data, error: dbErr } = await supabase.from('events').insert(value).select('id').single();
   if (dbErr) throw dbErr;
+  dropSnapshot();
   res.json({ id: data.id });
 }));
 
@@ -138,13 +164,40 @@ app.put('/api/events/:id', requireTeacher, asyncSafe(async (req, res) => {
   if (error) return res.status(400).json({ error });
   const { data, error: dbErr } = await supabase.from('events').update(value).eq('id', Number(req.params.id)).select('id').maybeSingle();
   if (dbErr) throw dbErr;
+  dropSnapshot();
   if (!data) return res.status(404).json({ error: 'Event not found' });
   res.json({ ok: true });
+}));
+
+// Control-room override: open or close attendance right now, whatever the schedule says.
+app.post('/api/events/:id/attendance', requireTeacher, asyncSafe(async (req, res) => {
+  const ev = await getEvent(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'Event not found' });
+  const now = Date.now();
+  let patch;
+  if (req.body.open) {
+    // After the scheduled close (or a manual one), keep it open for 30 minutes; close it again any time.
+    const closesLater = Date.parse(ev.attendance_closes_at || ev.ends_at) > now + 60_000;
+    patch = {
+      attendance_opens_at: new Date(now).toISOString(),
+      attendance_closes_at: closesLater ? ev.attendance_closes_at : new Date(now + 30 * 60_000).toISOString(),
+    };
+  } else if (now < Date.parse(ev.starts_at)) {
+    // Closing before the start just undoes an early open; attendance opens on schedule again.
+    patch = { attendance_opens_at: null, attendance_closes_at: null };
+  } else {
+    patch = { attendance_closes_at: new Date(now).toISOString() };
+  }
+  const { error } = await supabase.from('events').update(patch).eq('id', ev.id);
+  if (error) throw error;
+  dropSnapshot();
+  res.json({ attendance_open: attendanceOpen({ ...ev, ...patch }, now) });
 }));
 
 app.delete('/api/events/:id', requireTeacher, asyncSafe(async (req, res) => {
   const { error } = await supabase.from('events').delete().eq('id', Number(req.params.id));
   if (error) throw error;
+  dropSnapshot();
   res.json({ ok: true });
 }));
 
@@ -183,22 +236,22 @@ app.post('/api/events/:id/attend', requireUser, requireProfile, attendLimiter, a
   if (!ev) return res.status(404).json({ status: 'not_found' });
 
   const now = Date.now();
-  if (getStatus(ev, now) === 'upcoming') return res.status(403).json({ status: 'not_started' });
-  if (!attendanceOpen(ev, now)) return res.status(403).json({ status: 'closed' });
+  if (!attendanceOpen(ev, now)) return res.status(403).json({ status: getStatus(ev, now) === 'upcoming' ? 'not_started' : 'closed' });
 
   const { token, deviceId } = req.body;
   if (typeof deviceId !== 'string' || deviceId.length < 8 || deviceId.length > 100)
     return res.status(400).json({ status: 'bad_request' });
-  if (!isValidToken(ev.id, token)) return res.status(400).json({ status: 'expired' });
+  const tokenStatus = checkToken(ev.id, token);
+  if (tokenStatus !== 'ok') return res.status(400).json({ status: tokenStatus });
 
   const { data: reg } = await supabase.from('registrations').select('email').eq('event_id', ev.id).eq('email', req.user.email).maybeSingle();
   if (!reg) return res.status(403).json({ status: 'not_registered' });
 
+  // Insert straight away; on a unique violation, look up whether it was my own earlier scan.
   const alreadyMine = async () => {
     const { data } = await supabase.from('attendance').select('email').eq('event_id', ev.id).eq('email', req.user.email).maybeSingle();
     return !!data;
   };
-  if (await alreadyMine()) return res.json({ status: 'duplicate' });
 
   const { error } = await supabase.from('attendance').insert({
     event_id: ev.id,
@@ -211,7 +264,8 @@ app.post('/api/events/:id/attend', requireUser, requireProfile, attendLimiter, a
   if (!error) return res.json({ status: 'marked' });
   if (error.code !== UNIQUE_VIOLATION) throw error;
   // Either my own row (duplicate) or the (event_id, device_id) partial unique index (device_used).
-  return res.status((await alreadyMine()) ? 200 : 403).json({ status: (await alreadyMine()) ? 'duplicate' : 'device_used' });
+  const mine = await alreadyMine();
+  return res.status(mine ? 200 : 403).json({ status: mine ? 'duplicate' : 'device_used' });
 }));
 
 // ---------- teacher tools ----------
@@ -232,7 +286,7 @@ app.get('/api/events/:id/stats', requireTeacher, asyncSafe(async (req, res) => {
 app.post('/api/events/:id/manual', requireTeacher, asyncSafe(async (req, res) => {
   const ev = await getEvent(req.params.id);
   if (!ev) return res.status(404).json({ error: 'Event not found' });
-  if (getStatus(ev) === 'upcoming') return res.status(403).json({ error: 'Event has not started' });
+  if (getStatus(ev) === 'upcoming' && !attendanceOpen(ev)) return res.status(403).json({ error: 'Event has not started' });
 
   const roll = String(req.body.roll_no || '').trim().toUpperCase().replace(/\s+/g, '');
   const { data: profile } = await supabase.from('profiles').select('email, name, roll_no').eq('roll_no', roll).maybeSingle();
@@ -292,15 +346,12 @@ app.get('/api/events/:id/export.csv', requireTeacher, asyncSafe(async (req, res)
 
 // ---------- admin ----------
 app.get('/api/admin/overview', requireTeacher, asyncSafe(async (req, res) => {
-  const [{ data: events = [] }, { data: allReg = [] }, { data: allAtt = [] }, { count: totalStudents = 0 }, { data: profiles = [] }] = await Promise.all([
-    supabase.from('events').select('*').order('starts_at'),
-    supabase.from('registrations').select('event_id'),
-    supabase.from('attendance').select('event_id'),
+  const [{ events, regCount, attCount }, { count: totalStudents = 0 }, { data: profiles = [] }] = await Promise.all([
+    getSnapshot(),
     supabase.from('profiles').select('*', { count: 'exact', head: true }),
     supabase.from('profiles').select('department'),
   ]);
-  const regCount = new Map(); for (const r of allReg) regCount.set(r.event_id, (regCount.get(r.event_id) || 0) + 1);
-  const attCount = new Map(); for (const r of allAtt) attCount.set(r.event_id, (attCount.get(r.event_id) || 0) + 1);
+  const sum = (m) => [...m.values()].reduce((a, b) => a + b, 0);
   const byDeptMap = new Map();
   for (const p of profiles) {
     const d = p.department || 'Unspecified';
@@ -309,8 +360,8 @@ app.get('/api/admin/overview', requireTeacher, asyncSafe(async (req, res) => {
   res.json({
     events: events.map((e) => ({ id: e.id, title: e.title, venue: e.venue, starts_at: e.starts_at, ends_at: e.ends_at, registered: regCount.get(e.id) || 0, attended: attCount.get(e.id) || 0 })),
     totalStudents,
-    totalRegistrations: allReg.length,
-    totalAttendances: allAtt.length,
+    totalRegistrations: sum(regCount),
+    totalAttendances: sum(attCount),
     byDept: [...byDeptMap.entries()].map(([department, n]) => ({ department, n })).sort((a, b) => b.n - a.n),
   });
 }));

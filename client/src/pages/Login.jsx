@@ -31,12 +31,13 @@ export default function Login() {
       if (!norm.endsWith('@' + domain)) throw new Error(`Use your @${domain} email`)
       const { error } = await supabase.auth.signInWithOtp({
         email: norm,
-        options: { shouldCreateUser: true },
+        // The email carries both a code (6–8 digits, set in Supabase → Auth) and a link; the link returns here.
+        options: { shouldCreateUser: true, emailRedirectTo: `${window.location.origin}/login` },
       })
       if (error) throw error
       setEmail(norm)
       setSent(true)
-      setInfo(`We mailed a code to ${norm}. Check your inbox and spam.`)
+      setInfo(`We mailed a code to ${norm}. Type it here, or open the link in the email on this device. Check spam too.`)
     } catch (err) {
       setError(err.message || 'Could not send code.')
     } finally {
@@ -95,8 +96,8 @@ export default function Login() {
             <div className="field">
               <span className="label">Verification code</span>
               <input className="input mono" inputMode="numeric" autoComplete="one-time-code"
-                pattern="\d{6}" maxLength={6} required autoFocus
-                placeholder="6-digit code"
+                pattern="\d{6,8}" maxLength={8} required autoFocus
+                placeholder="Code from the email"
                 value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
                 style={{ letterSpacing: '0.4em', fontSize: 20, textAlign: 'center' }} />
             </div>

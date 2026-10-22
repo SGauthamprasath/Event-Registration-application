@@ -8,10 +8,12 @@ function getStatus(ev, now = Date.now()) {
   return 'ended';
 }
 
-// Attendance is open from the start until attendance_closes_at (or ends_at).
+// Attendance is open from attendance_opens_at (or starts_at) until attendance_closes_at (or ends_at).
+// The control room sets attendance_opens_at to open early, or late after a close.
 function attendanceOpen(ev, now = Date.now()) {
+  const opens = ms(ev.attendance_opens_at || ev.starts_at);
   const closes = ms(ev.attendance_closes_at || ev.ends_at);
-  return now >= ms(ev.starts_at) && now < closes;
+  return now >= opens && now < closes;
 }
 
 module.exports = { getStatus, attendanceOpen };

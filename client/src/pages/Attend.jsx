@@ -9,6 +9,7 @@ const MESSAGES = {
   marked: ['Attendance marked', 'ok'],
   duplicate: ['You are already marked present', 'ok'],
   expired: ['That code expired. Scan the screen again.', 'warn'],
+  wrong_event: ['That QR is for a different event. Check you opened the right event.', 'error'],
   closed: ['Attendance is closed for this event.', 'error'],
   not_started: ['This event has not started yet.', 'error'],
   not_registered: ['You did not register for this event.', 'error'],
@@ -25,7 +26,7 @@ export default function Attend() {
   const busy = useRef(false)
   const scannerRef = useRef(null)
 
-  const canScan = ev && ev.registered && ev.status === 'live' && ev.attendance_open && !ev.attended
+  const canScan = ev && ev.registered && ev.attendance_open && !ev.attended
   const done = result && ['marked', 'duplicate'].includes(result.status)
 
   useEffect(() => {
@@ -70,7 +71,7 @@ export default function Attend() {
       <div className="muted small">{ev.title}</div>
 
       {!ev.registered && <div className="result error"><div className="icon"><X /></div>You are not registered for this event.</div>}
-      {ev.registered && ev.status === 'upcoming' && <div className="result warn">This event has not started. Attendance opens at the start time.</div>}
+      {ev.registered && ev.status === 'upcoming' && !ev.attendance_open && <div className="result warn">This event has not started. Attendance opens at the start time.</div>}
       {ev.registered && ev.status !== 'upcoming' && !ev.attendance_open && !ev.attended && <div className="result error"><div className="icon"><X /></div>Attendance is closed.</div>}
       {(ev.attended || done) && <div className="result ok"><div className="icon"><Check /></div>Your attendance is marked.</div>}
 

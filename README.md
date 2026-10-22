@@ -29,14 +29,14 @@ In `.env` set:
 - `DEV_LOGIN=1`: lets you log in by typing an email, with no code. **For testing only**; it is ignored when
   `NODE_ENV=production`, but never leave it on for the real event.
 
-Create events either with the teacher form (log in as a teacher, "+ New event") or by editing `server/src/seed.js`
-and running `npm run seed` once (running it twice creates duplicates).
+Create events either with the teacher form (log in as a teacher, "+ New event") or by pasting
+[supabase/seed.sql](supabase/seed.sql) into the Supabase SQL Editor (loads the five IAC 2026 events; safe to re-run).
 
 Run the automated API test any time: `npm test` (46 checks, uses a throwaway database).
 
 ## 2. Email login codes (needed for the real event)
 
-Students type their college email, get a 6-digit code by mail, and enter it. The server checks that the email
+Students type their college email, get a one-time code by mail, and enter it. The server checks that the email
 ends in `@psgitech.ac.in` before sending anything.
 
 To send the mail from a Gmail / Google Workspace account:

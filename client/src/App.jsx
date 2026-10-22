@@ -1,14 +1,18 @@
+import { lazy, Suspense } from 'react'
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './auth.jsx'
 import Login from './pages/Login.jsx'
 import Profile from './pages/Profile.jsx'
 import Dashboard from './pages/Dashboard.jsx'
-import Attend from './pages/Attend.jsx'
-import EventForm from './pages/EventForm.jsx'
-import TeacherEvent from './pages/TeacherEvent.jsx'
 import EventDetail from './pages/EventDetail.jsx'
-import Admin from './pages/Admin.jsx'
 import { useEvents } from './useEvents.js'
+
+// Loaded on demand: the QR scanner library is most of the bundle and only the scan page needs
+// it, and students never open the teacher pages.
+const Attend = lazy(() => import('./pages/Attend.jsx'))
+const EventForm = lazy(() => import('./pages/EventForm.jsx'))
+const TeacherEvent = lazy(() => import('./pages/TeacherEvent.jsx'))
+const Admin = lazy(() => import('./pages/Admin.jsx'))
 
 function Brand() {
   return (
@@ -105,6 +109,7 @@ export default function App() {
     <>
       <TopBar />
       <main className="page">
+        <Suspense fallback={<p className="loading">Loading…</p>}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/profile" element={<Protected allowIncomplete><Profile /></Protected>} />
@@ -119,6 +124,7 @@ export default function App() {
           <Route path="/teacher/events/:id" element={<Protected teacherOnly><TeacherEvent /></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </main>
       <Footer />
     </>

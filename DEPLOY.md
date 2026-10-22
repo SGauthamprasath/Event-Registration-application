@@ -14,12 +14,13 @@ Written for the actual event day. ~15 minutes end to end.
 2. **SQL Editor → New query**. Paste the entire file [supabase/schema.sql](supabase/schema.sql). Run. This creates `profiles`, `events`, `registrations`, `attendance` + RLS policies + the auto-profile trigger on signup.
 3. **Authentication → Providers → Email**:
    - Enable **Email provider**.
-   - Enable **Email OTP** (the 6-digit code flow). Disable **Confirm email** (we trust the OTP as proof).
+   - Enable **Email OTP** (the mailed-code flow; code length is under Auth → Providers → Email, and the login page accepts 6–8 digits). Disable **Confirm email** (we trust the OTP as proof).
    - Optional but **recommended for 180 students**: **Authentication → SMTP settings** → plug in your Gmail SMTP credentials. The default Supabase SMTP is throttled to ~30 emails/hour and will choke under a registration rush.
 4. **Project Settings → API** — grab these:
    - `URL` → used as `SUPABASE_URL` (server) and `VITE_SUPABASE_URL` (client)
    - `anon public` key → used as `VITE_SUPABASE_PUBLISHABLE_KEY` (client, safe to expose)
    - `service_role` key → used as `SUPABASE_SERVICE_ROLE_KEY` (server only, **never** in the client)
+5. **SQL Editor → New query**. Paste [supabase/seed.sql](supabase/seed.sql). Run. Loads the five IAC 2026 events (safe to re-run).
 
 ## 1 · Render — API
 
@@ -36,7 +37,7 @@ Written for the actual event day. ~15 minutes end to end.
    - `SUPABASE_SERVICE_ROLE_KEY=<service_role>`
    - `COLLEGE_DOMAIN=psgitech.ac.in`
    - `TEACHER_EMAILS=teacher1@psgitech.ac.in,teacher2@psgitech.ac.in`
-   - `QR_WINDOW_SECONDS=20`
+   - `QR_WINDOW_SECONDS=20` (`0` = fixed code, no rotation)
    - `CORS_ORIGIN=https://<your-vercel-domain>.vercel.app` (fill in after step 2)
 4. Deploy. Grab the URL — e.g. `https://campus-events-api.onrender.com`. Hit `/api/events` with a browser — expect `{"error":"Please log in again"}` (correct: that endpoint requires auth).
 
@@ -56,12 +57,12 @@ Render free tier spins down after 15 min idle; first wake-up is ~30 s. For event
 5. Copy the Vercel URL → back in Render env vars set `CORS_ORIGIN=https://<that-url>`. Save → Render redeploys.
 6. In Supabase → Authentication → **URL Configuration**, add the Vercel URL to **Site URL** and to **Additional redirect URLs**.
 
-The `vercel.json` in `client/` handles SPA routing so `/events/3`, `/admin` etc. don't 404 on direct load. Brochure PNGs ship with the build.
+The `vercel.json` in `client/` handles SPA routing so `/events/3`, `/admin` etc. don't 404 on direct load. The brochure images (`client/public/brochures/*.webp`) ship with the build.
 
 ## 3 · Smoke test
 
 - Open the Vercel URL on a laptop and a phone.
-- Enter a real `@psgitech.ac.in` email → Supabase mails the 6-digit code → paste → in. The `profiles` row is auto-created by the SQL trigger.
+- Enter a real `@psgitech.ac.in` email → Supabase mails the code → paste → in. The `profiles` row is auto-created by the SQL trigger.
 - Fill the profile.
 - Register for an event. Watch the row land in Supabase → Table Editor → `registrations`.
 - Promote yourself to teacher by adding your email to `TEACHER_EMAILS` on Render → redeploy → the Control Room + Admin nav links appear.
@@ -78,7 +79,7 @@ If the phone camera won't start, the page isn't HTTPS. Vercel always is, so this
 - [ ] Create / verify every real event via **Teacher → New event**.
 - [ ] At the hall: open **Control Room** → **Fullscreen for projector**.
 - [ ] After each event: **Download CSV** from the Admin page.
-- [ ] Keep a backup laptop running locally in case Render misbehaves — `npm run dev` + `vite --host` is Plan B. Both still point at the same Supabase project.
+- [ ] Keep a backup laptop running locally in case Render misbehaves — `npm start` in `server/` + `npm run dev:phone` in `client/` (HTTPS, so phone cameras work) is Plan B. Both still point at the same Supabase project.
 
 ## 5 · Common gotchas
 

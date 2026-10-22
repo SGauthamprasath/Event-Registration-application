@@ -8,10 +8,9 @@ import { Back, Clock, Download, Hourglass, MapPin, Maximize, Pencil, Users } fro
 function useRotatingQr(eventId, enabled) {
   const [qr, setQr] = useState(null)
   const [closed, setClosed] = useState(false)
-  const [tickMs, setTickMs] = useState(0)
   useEffect(() => {
     if (!enabled) { setQr(null); return }
-    let timer, raf, stop = false
+    let timer, stop = false
     async function tick() {
       try {
         const d = await api(`/events/${eventId}/qr`)
@@ -24,11 +23,9 @@ function useRotatingQr(eventId, enabled) {
       }
     }
     tick()
-    const loop = () => { setTickMs(Date.now()); raf = requestAnimationFrame(loop) }
-    raf = requestAnimationFrame(loop)
-    return () => { stop = true; clearTimeout(timer); cancelAnimationFrame(raf) }
+    return () => { stop = true; clearTimeout(timer) }
   }, [eventId, enabled])
-  return { qr, closed, now: tickMs }
+  return { qr, closed }
 }
 
 const fmtElapsed = (ms) => {
@@ -41,12 +38,14 @@ const fmtElapsed = (ms) => {
 
 export default function TeacherEvent() {
   const { id } = useParams()
-  const { events } = useEvents()
+  const { events, reload } = useEvents()
   const ev = events.find((e) => e.id === Number(id))
-  const { qr, closed, now } = useRotatingQr(id, !!ev?.attendance_open)
+  const { qr, closed } = useRotatingQr(id, !!ev?.attendance_open)
   const [stats, setStats] = useState(null)
   const [roll, setRoll] = useState('')
   const [manualMsg, setManualMsg] = useState(null)
+  const [toggling, setToggling] = useState(false)
+  const [toggleErr, setToggleErr] = useState('')
   const stage = useRef(null)
 
   useEffect(() => {
@@ -74,11 +73,20 @@ export default function TeacherEvent() {
     }
   }
 
+  async function toggleAttendance() {
+    setToggling(true); setToggleErr('')
+    try {
+      await api(`/events/${id}/attendance`, { method: 'POST', body: { open: !ev.attendance_open } })
+      await reload()
+    } catch (err) {
+      setToggleErr(err.message)
+    }
+    setToggling(false)
+  }
+
   if (!ev) return <p className="loading">Loading…</p>
 
   const elapsed = ev.status === 'live' ? Date.now() - Date.parse(ev.starts_at) : 0
-  const rotProgress = qr ? Math.max(0, Math.min(100, 100 - ((now - qr.startedAt) / qr.windowMs) * 100)) : 0
-  const rotSec = qr ? Math.max(0, Math.ceil((qr.windowMs - (now - qr.startedAt)) / 1000)) : 0
   const verifiedPct = stats && stats.registered ? Math.round((stats.attended / stats.registered) * 100) : 0
 
   return (
@@ -102,6 +110,10 @@ export default function TeacherEvent() {
         <div className="right">
           <button className="btn btn-primary" onClick={() => stage.current?.requestFullscreen?.()}><Maximize /> Fullscreen for projector</button>
           <button className="btn btn-ghost" onClick={() => downloadCsv(ev.id, ev.title)}><Download /> Download CSV</button>
+          <button className={`btn ${ev.attendance_open ? 'btn-ghost' : 'btn-live'}`} onClick={toggleAttendance} disabled={toggling}>
+            {toggling ? 'Saving…' : ev.attendance_open ? 'Close attendance now' : 'Open attendance now'}
+          </button>
+          {toggleErr && <p className="err-text">{toggleErr}</p>}
         </div>
       </div>
 
@@ -114,25 +126,20 @@ export default function TeacherEvent() {
                 <QRCodeSVG value={qr.token} size={320} marginSize={0} />
               </div>
 
-              <div className="qs-rot">
-                <div className="r1">
-                  <span>Rotating code</span>
-                  <span className="t">Refreshes in {String(Math.floor(rotSec / 60)).padStart(2, '0')}:{String(rotSec % 60).padStart(2, '0')}</span>
-                </div>
-                <div className="progress"><span style={{ width: rotProgress + '%' }} /></div>
-              </div>
             </div>
           ) : (
             <div className="qs-closed">
               <div className="ttl">
                 {ev.status === 'upcoming' ? `Attendance opens at ${fmtHour(ev.starts_at)}` : 'Attendance closed'}
               </div>
-              <div className="muted small">{ev.status === 'upcoming' ? 'The QR appears here when the event goes live.' : 'Download the CSV below for the final roster.'}</div>
+              <div className="muted small">{ev.status === 'upcoming' ? 'The QR appears here when the event goes live, or use "Open attendance now".' : 'Use "Open attendance now" to reopen it, or download the CSV for the final roster.'}</div>
             </div>
           )}
 
           <div className="qs-note">
-            <span className="muted small">The code refreshes every ~20 seconds, so a photo of it won't work. Students scan it from their phone in the hall.</span>
+            <span className="muted small">{qr && qr.windowMs === 0
+              ? 'This code stays the same for the whole session. Students scan it from their phone in the hall.'
+              : "The code keeps changing, so a photo of it won't work. Students scan it from their phone in the hall."}</span>
           </div>
         </div>
 

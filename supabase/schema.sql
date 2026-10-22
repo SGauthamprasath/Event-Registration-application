@@ -24,6 +24,8 @@ create table if not exists public.events (
   ends_at              timestamptz not null,
   attendance_closes_at timestamptz
 );
+-- Set by the control room's "Open attendance now"; overrides starts_at for attendance only.
+alter table public.events add column if not exists attendance_opens_at timestamptz;
 
 -- 3. registrations — a student registers once per event
 create table if not exists public.registrations (
@@ -48,6 +50,7 @@ create table if not exists public.attendance (
 create unique index if not exists attendance_device_per_event
   on public.attendance(event_id, device_id)
   where device_id is not null;
+create index if not exists attendance_email_idx on public.attendance(email);
 
 -- 5. Row-Level Security
 -- The server reaches these tables with the service_role key (bypasses RLS).
@@ -89,3 +92,8 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- 7. Backfill profiles for anyone who signed in before this trigger existed.
+insert into public.profiles (id, email)
+select id, lower(email) from auth.users where email is not null
+on conflict do nothing;

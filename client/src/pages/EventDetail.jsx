@@ -28,6 +28,7 @@ export default function EventDetail() {
   if (!ev) return <div className="card"><p>Event not found. <Link className="btn-link" to="/">Back</Link></p></div>
 
   const isTeacher = user.role === 'teacher'
+  const brochure = ev.brochure_url || details?.brochure
 
   async function register() {
     setBusy(true); setMsg('')
@@ -59,10 +60,10 @@ export default function EventDetail() {
             {!isTeacher && ev.status === 'upcoming' && (ev.registered
               ? <span className="pill ok"><i className="dot" />You're registered</span>
               : <button className="btn btn-primary" onClick={register} disabled={busy}>{busy ? 'Registering…' : 'Register'}</button>)}
-            {!isTeacher && ev.status === 'live' && ev.registered && !ev.attended && ev.attendance_open && (
+            {!isTeacher && ev.registered && !ev.attended && ev.attendance_open && (
               <Link className="btn btn-live" to={`/events/${ev.id}/attend`}><QrCode /> Mark attendance</Link>
             )}
-            {!isTeacher && ev.status === 'live' && ev.attended && <span className="pill ok"><i className="dot" />Attendance marked</span>}
+            {!isTeacher && ev.status !== 'ended' && ev.attended && <span className="pill ok"><i className="dot" />Attendance marked</span>}
             {!isTeacher && ev.status === 'ended' && ev.registered && (
               <span className="pill ok">{ev.attended ? 'You attended' : 'Not marked present'}</span>
             )}
@@ -72,9 +73,9 @@ export default function EventDetail() {
           {msg && <p className="err-text">{msg}</p>}
         </div>
 
-        {ev.brochure_url && (
-          <a href={ev.brochure_url} target="_blank" rel="noreferrer" className="ed-poster" title="Open full brochure">
-            <img src={ev.brochure_url} alt={`${ev.title} brochure`} />
+        {brochure && (
+          <a href={brochure} target="_blank" rel="noreferrer" className="ed-poster" title="Open full brochure">
+            <img src={brochure} alt={`${ev.title} brochure`} />
           </a>
         )}
       </div>

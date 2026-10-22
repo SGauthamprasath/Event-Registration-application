@@ -90,10 +90,10 @@ function FeatureEvent({ ev, isTeacher, onRegistered }) {
                 {ev.status === 'upcoming' && (ev.registered
                   ? <span className="pill ok"><i className="dot" />Registered</span>
                   : <button className="btn btn-primary" onClick={register} disabled={busy}>{busy ? 'Registering…' : 'Register'}</button>)}
-                {live && ev.registered && !ev.attended && ev.attendance_open && (
+                {ev.registered && !ev.attended && ev.attendance_open && (
                   <Link className="btn btn-live" to={`/events/${ev.id}/attend`}><QrCode /> Mark attendance</Link>
                 )}
-                {live && ev.attended && <span className="pill ok"><i className="dot" />Attendance marked</span>}
+                {ev.status !== 'ended' && ev.attended && <span className="pill ok"><i className="dot" />Attendance marked</span>}
               </>
             )}
           </div>
@@ -164,10 +164,10 @@ function EventCard({ ev, isTeacher, onRegistered }) {
               <button className="btn btn-primary btn-sm" onClick={register} disabled={busy}>{busy ? '…' : 'Register'}</button>
             )}
             {ev.status === 'upcoming' && ev.registered && <span className="pill ok"><i className="dot" />You're in</span>}
-            {ev.status === 'live' && ev.registered && !ev.attended && ev.attendance_open && (
+            {ev.registered && !ev.attended && ev.attendance_open && (
               <Link className="btn btn-live btn-sm" to={`/events/${ev.id}/attend`}>Mark present</Link>
             )}
-            {ev.status === 'live' && ev.attended && <span className="pill ok"><i className="dot" />Checked in</span>}
+            {ev.status !== 'ended' && ev.attended && <span className="pill ok"><i className="dot" />Checked in</span>}
             {ev.status === 'ended' && (ev.attended ? <span className="pill ok">You attended</span> : ev.registered ? <span className="muted small">Not marked present</span> : <span className="muted small">Ended</span>)}
           </>
         ) : (
@@ -249,7 +249,7 @@ function PassCard({ user, current, onRegister, registering }) {
           {!registered && live && (
             <div className="pass-warn-note">Registration closes when an event goes live.</div>
           )}
-          {registered && live && !attended && current.attendance_open && (
+          {registered && !attended && current.attendance_open && (
             <Link to={`/events/${current.id}/attend`} className="btn btn-live btn-sm btn-block">
               <QrCode /> Mark attendance
             </Link>

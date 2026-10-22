@@ -1,7 +1,9 @@
 // Hand-authored supplementary details for the IAC 2026 events.
-// Keyed by event id (matching the DB seed order).
+// Keyed by event id (matching the DB seed order). `brochure` is the poster in client/public,
+// used when the event row has no brochure_url of its own.
 export const EVENT_DETAILS = {
   1: {
+    brochure: '/brochures/iac-1.webp',
     track: 'Inauguration & Keynote',
     speaker: {
       name: 'Mr. Shriram Vasudevan',
@@ -25,6 +27,7 @@ export const EVENT_DETAILS = {
     organiser: 'Department of AI & Data Science',
   },
   2: {
+    brochure: '/brochures/iac-2.webp',
     track: 'Keynote',
     speaker: {
       name: 'Mr. Thirumoorthi T',
@@ -47,6 +50,7 @@ export const EVENT_DETAILS = {
     organiser: 'Department of AI & Data Science',
   },
   3: {
+    brochure: '/brochures/iac-3.webp',
     track: 'Keynote',
     speaker: {
       name: 'Mr. Ashok Kumar Mohan',
@@ -70,6 +74,7 @@ export const EVENT_DETAILS = {
     organiser: 'Department of AI & Data Science',
   },
   4: {
+    brochure: '/brochures/iac-4.webp',
     track: 'Keynote',
     speaker: {
       name: 'Mr. Vivek Amruth Chinnasamy',
@@ -93,6 +98,7 @@ export const EVENT_DETAILS = {
     organiser: 'Department of AI & Data Science',
   },
   5: {
+    brochure: '/brochures/iac-5.webp',
     track: 'Project Expo',
     speaker: {
       name: 'Mr. Vivek Amruth Chinnasamy',
