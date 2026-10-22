@@ -3,10 +3,11 @@ import { Link, useParams } from 'react-router-dom'
 import { Html5Qrcode } from 'html5-qrcode'
 import { api, getDeviceId } from '../api.js'
 import { useEvents } from '../useEvents.js'
+import { Back, Check, X } from '../icons.jsx'
 
 const MESSAGES = {
-  marked: ['✓ Attendance marked', 'ok'],
-  duplicate: ['✓ You are already marked present', 'ok'],
+  marked: ['Attendance marked', 'ok'],
+  duplicate: ['You are already marked present', 'ok'],
   expired: ['That code expired. Scan the screen again.', 'warn'],
   closed: ['Attendance is closed for this event.', 'error'],
   not_started: ['This event has not started yet.', 'error'],
@@ -19,7 +20,7 @@ export default function Attend() {
   const { id } = useParams()
   const { events, loading } = useEvents()
   const ev = events.find((e) => e.id === Number(id))
-  const [result, setResult] = useState(null) // { status }
+  const [result, setResult] = useState(null)
   const [camError, setCamError] = useState('')
   const busy = useRef(false)
   const scannerRef = useRef(null)
@@ -34,7 +35,7 @@ export default function Attend() {
     let cancelled = false
 
     async function onScan(text) {
-      if (busy.current) return          // the camera reports the same QR many times a second: send once
+      if (busy.current) return
       busy.current = true
       try {
         const d = await api(`/events/${id}/attend`, { method: 'POST', body: { token: text, deviceId: getDeviceId() } })
@@ -42,12 +43,12 @@ export default function Attend() {
       } catch (e) {
         setResult({ status: e.data?.status || 'error', message: e.message })
       }
-      setTimeout(() => { busy.current = false }, 1500) // short cooldown before the next try
+      setTimeout(() => { busy.current = false }, 1500)
     }
 
     scanner
       .start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 240, height: 240 } }, onScan, () => {})
-      .catch(() => !cancelled && setCamError('Camera not available. Allow camera access in your browser, and make sure the site is opened over HTTPS.'))
+      .catch(() => !cancelled && setCamError('Camera not available. Allow camera access and make sure the site is on HTTPS.'))
 
     return () => {
       cancelled = true
@@ -55,31 +56,42 @@ export default function Attend() {
     }
   }, [canScan, done, id])
 
-  if (loading) return <p className="muted">Loading…</p>
-  if (!ev) return <p className="error">Event not found. <Link to="/">Back</Link></p>
+  if (loading) return <p className="loading">// Fetching event…</p>
+  if (!ev) return <div className="scanner-wrap"><p className="err-text">Event not found.</p><Link className="btn btn-ghost" to="/">Back</Link></div>
 
   const msg = result && (MESSAGES[result.status] || [result.message || 'Something went wrong', 'error'])
 
   return (
-    <div className="card narrow stack">
-      <h1>{ev.title}</h1>
-      <p className="muted">Attendance</p>
+    <div className="scanner-wrap stack">
+      <Link to="/" className="btn btn-link" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Back style={{ width: 14, height: 14 }} /> Back to hub</Link>
 
-      {!ev.registered && <p className="error">You are not registered for this event.</p>}
-      {ev.registered && ev.status === 'upcoming' && <p>This event has not started. Attendance opens at the start time.</p>}
-      {ev.registered && ev.status !== 'upcoming' && !ev.attendance_open && !ev.attended && <p className="error">Attendance is closed.</p>}
-      {(ev.attended || done) && <p className="result ok">✓ Your attendance is marked.</p>}
+      <div className="tag">// CHECK-IN</div>
+      <h1>Scan the stage QR.</h1>
+      <div className="muted small">{ev.title}</div>
+
+      {!ev.registered && <div className="result error"><div className="icon"><X /></div>You are not registered for this event.</div>}
+      {ev.registered && ev.status === 'upcoming' && <div className="result warn">This event has not started. Attendance opens at the start time.</div>}
+      {ev.registered && ev.status !== 'upcoming' && !ev.attendance_open && !ev.attended && <div className="result error"><div className="icon"><X /></div>Attendance is closed.</div>}
+      {(ev.attended || done) && <div className="result ok"><div className="icon"><Check /></div>Your attendance is marked.</div>}
 
       {canScan && !done && (
         <>
-          <p>Point your camera at the QR code on the projector screen.</p>
-          <div id="reader" className="reader" />
-          {camError && <p className="error">{camError}</p>}
+          <div className="reader"><span /><div id="reader" /></div>
+          <div className="tag" style={{ textAlign: 'center' }}>Point at the projector QR  ·  Auto-submits on read</div>
+          {camError && <p className="err-text">{camError}</p>}
         </>
       )}
-      {msg && !done && <p className={`result ${msg[1]}`}>{msg[0]}</p>}
-      <p className="muted small">The code changes every few seconds, so a photo of it will not work.</p>
-      <Link className="btn ghost" to="/">Back to events</Link>
+
+      {msg && !done && (
+        <div className={`result ${msg[1]}`}>
+          <div className="icon">{msg[1] === 'ok' ? <Check /> : <X />}</div>
+          {msg[0]}
+        </div>
+      )}
+
+      <p className="muted small" style={{ textAlign: 'center' }}>The code rotates every ~20 seconds, so a photo won't work.</p>
+
+      <Link className="btn btn-ghost btn-block" to="/"><Back style={{ width: 14, height: 14 }} /> Back to events</Link>
     </div>
   )
 }

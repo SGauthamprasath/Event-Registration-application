@@ -18,19 +18,17 @@ export default function Login() {
 
   if (user) return <Navigate to="/" replace />
 
-  // Step 1: the server checks the domain and mails a 6-digit code.
   async function onSend(e) {
     e?.preventDefault()
     setError(''); setInfo(''); setBusy(true)
     try {
       await api('/auth/otp/request', { method: 'POST', body: { email } })
       setSent(true)
-      setInfo(`We sent a code to ${email}. Check your inbox (and spam).`)
+      setInfo(`We mailed a code to ${email}. Check your inbox and spam.`)
     } catch (err) { setError(err.message) }
     finally { setBusy(false) }
   }
 
-  // Step 2: the server checks the code and returns a session.
   async function onVerify(e) {
     e.preventDefault()
     setError(''); setBusy(true)
@@ -51,38 +49,66 @@ export default function Login() {
   }
 
   return (
-    <div className="card narrow">
-      <h1>Campus Events</h1>
-      <p className="muted">Sign in with your college email{cfg ? ` (@${cfg.domain})` : ''} to register for events and mark attendance.</p>
+    <div className="auth-card">
+      <div className="card card-pad-lg stack">
+        <div className="brand brand-lg">
+          <span className="brand-bar" aria-hidden />
+          <div className="brand-mark">
+            <div className="bm-name">campus<span className="bm-dot">.</span>events</div>
+          </div>
+        </div>
 
-      {!sent ? (
-        <form onSubmit={onSend} className="stack">
-          <input type="email" required autoComplete="email" placeholder={`you@${cfg?.domain || 'college.edu'}`}
-                 value={email} onChange={(e) => setEmail(e.target.value)} />
-          <button disabled={busy}>{busy ? 'Sending...' : 'Send login code'}</button>
-        </form>
-      ) : (
-        <form onSubmit={onVerify} className="stack">
-          <input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} required autoFocus
-                 placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
-          <button disabled={busy}>{busy ? 'Checking...' : 'Verify and sign in'}</button>
-          <p className="small muted">
-            <a href="#" onClick={(e) => { e.preventDefault(); onSend() }}>Resend code</a>
-            {' · '}
-            <a href="#" onClick={(e) => { e.preventDefault(); setSent(false); setCode(''); setInfo(''); setError('') }}>Use a different email</a>
-          </p>
-        </form>
-      )}
-      {info && <p className="muted small">{info}</p>}
+        <div style={{ marginTop: 10 }}>
+          <div className="tag" style={{ marginBottom: 10 }}>// ACCESS CONTROL</div>
+          <h1 style={{ marginBottom: 10 }}>Check in to Campus Events.</h1>
+          <p className="muted small">Sign in with your college email{cfg ? ` (@${cfg.domain})` : ''}. We'll mail a one-time code.</p>
+        </div>
 
-      {cfg?.devLogin && (
-        <form onSubmit={onDev} className="stack devbox">
-          <p className="muted small">Local testing login (disabled in production)</p>
-          <input type="email" required placeholder={`you@${cfg.domain}`} value={devEmail} onChange={(e) => setDevEmail(e.target.value)} />
-          <button>Continue</button>
-        </form>
-      )}
-      {error && <p className="error">{error}</p>}
+        {!sent ? (
+          <form onSubmit={onSend} className="stack" style={{ marginTop: 8 }}>
+            <div className="field">
+              <span className="label">College email</span>
+              <input className="input mono" type="email" required autoComplete="email"
+                placeholder={`you@${cfg?.domain || 'college.edu'}`}
+                value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <button className="btn btn-primary btn-block" disabled={busy}>
+              {busy ? 'Sending…' : 'Send code →'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={onVerify} className="stack" style={{ marginTop: 8 }}>
+            <div className="field">
+              <span className="label">Verification code</span>
+              <input className="input mono" inputMode="numeric" autoComplete="one-time-code"
+                pattern="\d{6}" maxLength={6} required autoFocus
+                placeholder="6-digit code"
+                value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                style={{ letterSpacing: '0.4em', fontSize: 20, textAlign: 'center' }} />
+            </div>
+            <button className="btn btn-primary btn-block" disabled={busy}>
+              {busy ? 'Verifying…' : 'Verify and sign in →'}
+            </button>
+            <div className="row between small">
+              <button type="button" className="btn-link" onClick={() => onSend()}>Resend code</button>
+              <button type="button" className="btn-link" onClick={() => { setSent(false); setCode(''); setInfo(''); setError('') }}>Use another email</button>
+            </div>
+          </form>
+        )}
+        {info && <p className="muted small">{info}</p>}
+        {error && <p className="err-text">{error}</p>}
+
+        {cfg?.devLogin && (
+          <form onSubmit={onDev} className="stack devbox">
+            <div className="tag" style={{ color: 'var(--warn)' }}>[DEV LOGIN ON] bypass for local testing</div>
+            <div className="field">
+              <span className="label">Dev email</span>
+              <input className="input mono" type="email" required placeholder={`you@${cfg.domain}`} value={devEmail} onChange={(e) => setDevEmail(e.target.value)} />
+            </div>
+            <button className="btn btn-ghost btn-block">Continue →</button>
+          </form>
+        )}
+      </div>
     </div>
   )
 }

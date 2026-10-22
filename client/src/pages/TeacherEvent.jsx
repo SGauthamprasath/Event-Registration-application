@@ -3,20 +3,20 @@ import { Link, useParams } from 'react-router-dom'
 import { QRCodeSVG } from 'qrcode.react'
 import { api, downloadCsv } from '../api.js'
 import { fmtHour, useEvents } from '../useEvents.js'
+import { Back, Clock, Download, Hourglass, MapPin, Maximize, Pencil, Users } from '../icons.jsx'
 
-// Rotating QR. We ask the server for the current token and schedule the next fetch for the
-// moment it expires, so the code on screen is always fresh.
 function useRotatingQr(eventId, enabled) {
   const [qr, setQr] = useState(null)
   const [closed, setClosed] = useState(false)
+  const [tickMs, setTickMs] = useState(0)
   useEffect(() => {
     if (!enabled) { setQr(null); return }
-    let timer, stop = false
+    let timer, raf, stop = false
     async function tick() {
       try {
         const d = await api(`/events/${eventId}/qr`)
         if (stop) return
-        setQr(d); setClosed(false)
+        setQr({ ...d, startedAt: Date.now() }); setClosed(false)
         timer = setTimeout(tick, Math.max(800, d.expiresInMs + 150))
       } catch {
         if (stop) return
@@ -24,24 +24,39 @@ function useRotatingQr(eventId, enabled) {
       }
     }
     tick()
-    return () => { stop = true; clearTimeout(timer) }
+    const loop = () => { setTickMs(Date.now()); raf = requestAnimationFrame(loop) }
+    raf = requestAnimationFrame(loop)
+    return () => { stop = true; clearTimeout(timer); cancelAnimationFrame(raf) }
   }, [eventId, enabled])
-  return { qr, closed }
+  return { qr, closed, now: tickMs }
+}
+
+const fmtElapsed = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  const h = String(Math.floor(s / 3600)).padStart(2, '0')
+  const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+  const sec = String(s % 60).padStart(2, '0')
+  return `${h}:${m}:${sec}`
 }
 
 export default function TeacherEvent() {
   const { id } = useParams()
   const { events } = useEvents()
   const ev = events.find((e) => e.id === Number(id))
-  const { qr, closed } = useRotatingQr(id, !!ev?.attendance_open)
+  const { qr, closed, now } = useRotatingQr(id, !!ev?.attendance_open)
   const [stats, setStats] = useState(null)
   const [roll, setRoll] = useState('')
-  const [manualMsg, setManualMsg] = useState('')
+  const [manualMsg, setManualMsg] = useState(null)
   const stage = useRef(null)
 
   useEffect(() => {
     let stop = false
-    const load = () => api(`/events/${id}/stats`).then((d) => !stop && setStats(d)).catch(() => {})
+    const load = async () => {
+      try {
+        const d = await api(`/events/${id}/stats`)
+        if (!stop) setStats(d)
+      } catch {}
+    }
     load()
     const t = setInterval(load, 5000)
     return () => { stop = true; clearInterval(t) }
@@ -49,60 +64,114 @@ export default function TeacherEvent() {
 
   async function manual(e) {
     e.preventDefault()
-    setManualMsg('')
+    setManualMsg(null)
     try {
       const d = await api(`/events/${id}/manual`, { method: 'POST', body: { roll_no: roll } })
-      setManualMsg(d.status === 'marked' ? `✓ Marked ${d.student.name} (${d.student.roll_no})` : `${d.student.name} was already marked`)
+      setManualMsg({ ok: d.status === 'marked', text: d.status === 'marked' ? `Marked ${d.student.name} (${d.student.roll_no})` : `${d.student.name} was already marked` })
       setRoll('')
-    } catch (err) { setManualMsg(err.data?.status === 'not_registered' ? 'That roll number is not registered for this event' : err.message) }
+    } catch (err) {
+      setManualMsg({ ok: false, text: err.data?.status === 'not_registered' ? 'Roll number is not registered for this event' : err.message })
+    }
   }
 
-  if (!ev) return <p className="muted">Loading…</p>
+  if (!ev) return <p className="loading">Loading…</p>
+
+  const elapsed = ev.status === 'live' ? Date.now() - Date.parse(ev.starts_at) : 0
+  const rotProgress = qr ? Math.max(0, Math.min(100, 100 - ((now - qr.startedAt) / qr.windowMs) * 100)) : 0
+  const rotSec = qr ? Math.max(0, Math.ceil((qr.windowMs - (now - qr.startedAt)) / 1000)) : 0
+  const verifiedPct = stats && stats.registered ? Math.round((stats.attended / stats.registered) * 100) : 0
 
   return (
-    <div className="stack">
-      <div className="row between">
-        <h1>{ev.title}</h1>
-        <span className={`badge ${ev.status}`}>{ev.status}</span>
+    <div className="console">
+      <div className="row" style={{ gap: 10 }}>
+        <Link to="/" className="btn btn-link" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Back style={{ width: 14, height: 14 }} /> Back to events</Link>
       </div>
 
-      <div className="card stage" ref={stage}>
-        {ev.attendance_open && qr && !closed ? (
-          <>
-            <QRCodeSVG value={qr.token} size={320} marginSize={2} className="qr" />
-            <p className="big"><strong>{ev.checked_in}</strong> checked in</p>
-            <p className="muted">Open Campus Events → your event → Mark attendance → scan this code. It refreshes every {Math.round(qr.windowMs / 1000)} s.</p>
-          </>
-        ) : (
-          <p className="big">
-            {ev.status === 'upcoming' && `Attendance opens at ${fmtHour(ev.starts_at)}`}
-            {ev.status !== 'upcoming' && 'Attendance is closed'}
-          </p>
-        )}
-        <button className="ghost" onClick={() => stage.current?.requestFullscreen?.()}>Full screen for projector</button>
-      </div>
-
-      <div className="card">
-        <h2>Summary</h2>
-        <div className="stats">
-          <div><strong>{stats?.registered ?? '–'}</strong><span>Registered</span></div>
-          <div><strong>{stats?.attended ?? '–'}</strong><span>Attended</span></div>
-          <div><strong>{stats?.absent ?? '–'}</strong><span>Absent</span></div>
+      <div className="op-head">
+        <div className="left">
+          <div className="pills">
+            <span className={`status-pill ${ev.status}`}>
+              {ev.status === 'live' && <i className="dot pulse" />}
+              {ev.status === 'live' ? 'Live' : ev.status === 'upcoming' ? 'Upcoming' : 'Ended'}
+            </span>
+            {ev.status === 'live' && <span className="tag" style={{ color: 'var(--ink-2)' }}><Clock style={{ width: 12, height: 12, verticalAlign: '-2px' }} /> {fmtElapsed(elapsed)} elapsed</span>}
+            <span className="tag"><MapPin style={{ width: 12, height: 12, verticalAlign: '-2px' }} /> {ev.venue || 'TBA'}</span>
+          </div>
+          <h1>{ev.title}</h1>
         </div>
-        <button onClick={() => downloadCsv(ev.id, ev.title)}>Download CSV (registered, attended, absent)</button>
+        <div className="right">
+          <button className="btn btn-primary" onClick={() => stage.current?.requestFullscreen?.()}><Maximize /> Fullscreen for projector</button>
+          <button className="btn btn-ghost" onClick={() => downloadCsv(ev.id, ev.title)}><Download /> Download CSV</button>
+        </div>
       </div>
 
-      <form className="card stack" onSubmit={manual}>
-        <h2>Manual check-in</h2>
-        <p className="muted small">For a dead phone or a shared phone. The student must be registered for this event.</p>
-        <div className="row">
-          <input required placeholder="Roll number" value={roll} onChange={(e) => setRoll(e.target.value)} />
-          <button>Mark present</button>
-        </div>
-        {manualMsg && <p>{manualMsg}</p>}
-      </form>
+      <div className="op-body">
+        {/* LEFT: QR stage */}
+        <div className="qr-stage" ref={stage}>
+          {ev.attendance_open && qr && !closed ? (
+            <div className="qs-well">
+              <div className="qr-tile">
+                <QRCodeSVG value={qr.token} size={320} marginSize={0} />
+              </div>
 
-      <Link to={`/teacher/events/${ev.id}/edit`} className="btn ghost">Edit event / change times</Link>
+              <div className="qs-rot">
+                <div className="r1">
+                  <span>Rotating code</span>
+                  <span className="t">Refreshes in {String(Math.floor(rotSec / 60)).padStart(2, '0')}:{String(rotSec % 60).padStart(2, '0')}</span>
+                </div>
+                <div className="progress"><span style={{ width: rotProgress + '%' }} /></div>
+              </div>
+            </div>
+          ) : (
+            <div className="qs-closed">
+              <div className="ttl">
+                {ev.status === 'upcoming' ? `Attendance opens at ${fmtHour(ev.starts_at)}` : 'Attendance closed'}
+              </div>
+              <div className="muted small">{ev.status === 'upcoming' ? 'The QR appears here when the event goes live.' : 'Download the CSV below for the final roster.'}</div>
+            </div>
+          )}
+
+          <div className="qs-note">
+            <span className="muted small">The code refreshes every ~20 seconds, so a photo of it won't work. Students scan it from their phone in the hall.</span>
+          </div>
+        </div>
+
+        {/* RIGHT: stats + override */}
+        <div className="stack" style={{ gap: 16 }}>
+          <div className="stat-row">
+            <div className="stat">
+              <div className="k"><span>Registered</span><Users style={{ width: 14, height: 14 }} /></div>
+              <div className="v">{stats?.registered ?? ev.registered_count ?? 0}</div>
+              <div className="u">students</div>
+            </div>
+            <div className="stat live">
+              <div className="k"><span style={{ color: 'var(--live)' }}>Attended</span>{ev.status === 'live' && <i className="dot pulse" style={{ color: 'var(--live)' }} />}</div>
+              <div className="v">{stats?.attended ?? ev.checked_in ?? 0}</div>
+              <div className="u">{verifiedPct}% turnout</div>
+            </div>
+            <div className="stat">
+              <div className="k"><span>Absent</span><Hourglass style={{ width: 14, height: 14 }} /></div>
+              <div className="v">{stats?.absent ?? Math.max(0, (ev.registered_count || 0) - (ev.checked_in || 0))}</div>
+              <div className="u">yet to check in</div>
+            </div>
+          </div>
+
+          <form className="override" onSubmit={manual}>
+            <div className="oh">
+              <span className="tag ink-2">Manual check-in</span>
+              <span className="tag">For a dead phone</span>
+            </div>
+            <div className="input-group">
+              <input className="input mono" required placeholder="Roll number (e.g. 22AD001)" value={roll} onChange={(e) => setRoll(e.target.value)} />
+              <button className="btn btn-live btn-sm" style={{ marginLeft: 'auto' }}>Mark present</button>
+            </div>
+            {manualMsg && <p className={manualMsg.ok ? 'ok-text' : 'err-text'}>{manualMsg.ok ? '✓ ' : ''}{manualMsg.text}</p>}
+            <p className="muted small" style={{ margin: 0 }}>The student must be registered for this event.</p>
+          </form>
+
+          <Link to={`/teacher/events/${ev.id}/edit`} className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }}><Pencil /> Edit event / change times</Link>
+        </div>
+      </div>
     </div>
   )
 }

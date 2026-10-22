@@ -123,7 +123,7 @@ function parseEventBody(b) {
   if (!title) return { error: 'Title is required' };
   if (!valid(b.starts_at) || !valid(b.ends_at)) return { error: 'Valid start and end times are required' };
   if (Date.parse(b.ends_at) <= Date.parse(b.starts_at)) return { error: 'End time must be after start time' };
-  if (brochure_url && !isHttpUrl(brochure_url)) return { error: 'Brochure must be an http(s) image link' };
+  if (brochure_url && !isHttpUrl(brochure_url) && !brochure_url.startsWith('/')) return { error: 'Brochure must be an http(s) link or a /path' };
   let closes = null;
   if (b.attendance_closes_at) {
     if (!valid(b.attendance_closes_at)) return { error: 'Invalid attendance close time' };
