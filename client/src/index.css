@@ -218,6 +218,10 @@ p { margin: 0 0 10px; color: var(--ink-2); }
 .brand .bm-sub { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; }
 .brand.brand-lg .bm-name { font-size: 26px; }
 .brand.brand-lg .brand-bar { width: 4px; }
+@media (max-width: 480px) {
+  .brand .bm-name { font-size: 15px; }
+  .brand.brand-lg .bm-name { font-size: 20px; }
+}
 .logo-sq {
   width: 36px; height: 36px; border-radius: 10px;
   background: var(--surface-2); border: 1px solid var(--line);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../auth.jsx'
+import { api } from '../api.js'
 import { supabase } from '../supabase.js'
 
 export default function Login() {
@@ -29,6 +30,14 @@ export default function Login() {
     try {
       const norm = email.trim().toLowerCase()
       if (!norm.endsWith('@' + domain)) throw new Error(`Use your @${domain} email`)
+      // Students who verified before get straight in; everyone else falls through to the emailed code.
+      if (!sent) {
+        const quick = await api('/quick-login', { method: 'POST', body: { email: norm } }).catch(() => null)
+        if (quick?.token_hash) {
+          const { error } = await supabase.auth.verifyOtp({ token_hash: quick.token_hash, type: 'magiclink' })
+          if (!error) return // AuthProvider picks up the session and redirects.
+        }
+      }
       const { error } = await supabase.auth.signInWithOtp({
         email: norm,
         // The email carries both a code (6–8 digits, set in Supabase → Auth) and a link; the link returns here.
@@ -69,14 +78,14 @@ export default function Login() {
         <div className="brand brand-lg">
           <span className="brand-bar" aria-hidden />
           <div className="brand-mark">
-            <div className="bm-name">campus<span className="bm-dot">.</span>events</div>
+            <div className="bm-name">Industry<span className="bm-dot">.</span>Academia<span className="bm-dot">.</span>Conclave</div>
           </div>
         </div>
 
         <div style={{ marginTop: 10 }}>
           <div className="tag" style={{ marginBottom: 10 }}>// ACCESS CONTROL</div>
           <h1 style={{ marginBottom: 10 }}>Check in to Campus Events.</h1>
-          <p className="muted small">Sign in with your college email (@{domain}). We'll mail a one-time code.</p>
+          <p className="muted small">Sign in with your college email (@{domain}). First time here? We'll mail you a one-time code.</p>
         </div>
 
         {!sent ? (
@@ -88,7 +97,7 @@ export default function Login() {
                 value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
             <button className="btn btn-primary btn-block" disabled={busy}>
-              {busy ? 'Sending…' : 'Send code →'}
+              {busy ? 'Signing in…' : 'Continue →'}
             </button>
           </form>
         ) : (

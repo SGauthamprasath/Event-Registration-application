@@ -21,7 +21,7 @@ async function authHeader() {
 }
 
 export async function api(path, { method = 'GET', body, raw } = {}) {
-  const res = await fetch(API_BASE + '/api' + path, {
+  const send = async () => fetch(API_BASE + '/api' + path, {
     method,
     headers: {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
@@ -29,8 +29,15 @@ export async function api(path, { method = 'GET', body, raw } = {}) {
     },
     body: body ? JSON.stringify(body) : undefined,
   })
+  let res = await send()
+  // A 401 can just mean the access token expired while the phone slept. Refresh and retry once;
+  // only a session that can't be refreshed is signed out (that means a new email code).
   if (res.status === 401) {
-    await supabase.auth.signOut().catch(() => {})
+    const { data, error } = await supabase.auth.refreshSession()
+    if (!error && data.session) res = await send()
+  }
+  if (res.status === 401) {
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => {})
     window.dispatchEvent(new Event('ce-logout'))
   }
   if (raw) {

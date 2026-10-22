@@ -9,15 +9,20 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  // Only a 401 means "not logged in". If the server is waking up (Render) or busy, keep the
+  // session and retry, rather than showing the login page and prompting a new email code.
   const loadMe = useCallback(async () => {
-    try {
-      const { user } = await api('/me')
-      setUser(user)
-    } catch {
-      setUser(null)
-    } finally {
-      setLoading(false)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const { user } = await api('/me')
+        setUser(user)
+        break
+      } catch (e) {
+        if (e.status === 401 || attempt >= 10) { setUser(null); break }
+        await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** attempt, 5000)))
+      }
     }
+    setLoading(false)
   }, [])
 
   // Hydrate the user on mount from any existing Supabase session, and keep in sync.

@@ -37,6 +37,32 @@ app.get('/api/config', (req, res) => {
   res.json({ domain: auth.DOMAIN, supabaseUrl: process.env.SUPABASE_URL });
 });
 
+// ---------- quick login ----------
+// A student who has verified by email once (and finished their profile) can sign in again with
+// just their email: the server mints a one-time sign-in token via the admin API (no email sent)
+// and the client exchanges it for a session. This trades security for fewer emails: anyone who
+// knows a verified student's email can sign in as them. Teachers always need the emailed code.
+// Turn it off with QUICK_LOGIN=0 on the server.
+const quickLoginOn = () => process.env.QUICK_LOGIN !== '0';
+const quickLimiter = rateLimit({
+  windowMs: 10 * 60_000,
+  limit: 10,
+  keyGenerator: (req) => String(req.body?.email || '').trim().toLowerCase() || ipKeyGenerator(req),
+  message: { error: 'Too many attempts. Wait a few minutes.' },
+  standardHeaders: true, legacyHeaders: false,
+});
+
+app.post('/api/quick-login', quickLimiter, asyncSafe(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const no = () => res.json({ token_hash: null }); // client falls back to the emailed code
+  if (!quickLoginOn() || !auth.isCollegeEmail(email) || auth.isTeacher(email)) return no();
+  const profile = await auth.loadProfile(email);
+  if (!auth.profileComplete(profile)) return no();
+  const { data, error } = await supabase.auth.admin.generateLink({ type: 'magiclink', email });
+  if (error || !data?.properties?.hashed_token) return no();
+  res.json({ token_hash: data.properties.hashed_token });
+}));
+
 // ---------- profile ----------
 app.get('/api/me', requireUser, (req, res) => {
   res.json({ user: auth.publicUser(req.user, req.user.role) });

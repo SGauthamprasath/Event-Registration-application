@@ -29,6 +29,8 @@ const PROFILE_TTL_MS = 60_000;
 const tokenCache = new Map();   // token -> { user, until }
 const profileCache = new Map(); // email -> { profile, until }
 
+const upstream = (cause) => Object.assign(new Error('auth backend unavailable'), { upstream: true, cause });
+
 function prune(map, now) {
   if (map.size < 5000) return;
   for (const [k, v] of map) if (v.until <= now) map.delete(k);
@@ -39,6 +41,9 @@ async function verifyToken(token) {
   const hit = tokenCache.get(token);
   if (hit && hit.until > now) return hit.user;
   const { data: { user }, error } = await supabase.auth.getUser(token);
+  // Supabase answers 4xx for a bad/expired token; anything else (timeout, 5xx, rate limit) is
+  // an outage on its side, and must not log the student out.
+  if (error && !(error.status >= 400 && error.status < 500 && error.status !== 429)) throw upstream(error);
   if (error || !user?.email) throw new Error('invalid token');
   let exp = now + TOKEN_TTL_MS;
   try { exp = JSON.parse(Buffer.from(token.split('.')[1], 'base64url')).exp * 1000 - 30_000; } catch {}
@@ -51,7 +56,9 @@ async function loadProfile(email) {
   const now = Date.now();
   const hit = profileCache.get(email);
   if (hit && hit.until > now) return hit.profile;
-  const { data } = await supabase.from('profiles').select('*').eq('email', email).maybeSingle();
+  const { data, error } = await supabase.from('profiles').select('*').eq('email', email).maybeSingle();
+  // A failed lookup must not look like "no profile" (that would send a student back to the profile form).
+  if (error) throw upstream(error);
   // Don't cache a missing profile: the signup trigger may create it a moment later.
   if (data) { prune(profileCache, now); profileCache.set(email, { profile: data, until: now + PROFILE_TTL_MS }); }
   return data || null;
@@ -74,6 +81,7 @@ async function requireUser(req, res, next) {
     req.user = { ...profile, email, role: isTeacher(email) ? 'teacher' : 'student' };
     next();
   } catch (e) {
+    if (e.upstream) return res.status(503).json({ error: 'Server is busy, please try again in a moment' });
     res.status(401).json({ error: 'Please log in again' });
   }
 }

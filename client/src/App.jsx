@@ -19,7 +19,7 @@ function Brand() {
     <>
       <span className="brand-bar" aria-hidden />
       <div className="brand-mark">
-        <div className="bm-name">campus<span className="bm-dot">.</span>events</div>
+        <div className="bm-name">Industry<span className="bm-dot">.</span>Academia<span className="bm-dot">.</span>Conclave</div>
       </div>
     </>
   )
