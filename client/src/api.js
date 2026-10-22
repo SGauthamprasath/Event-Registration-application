@@ -1,9 +1,6 @@
-// api.js - one place that talks to the server. Adds the login token to every request
-// and turns server errors into thrown Errors the pages can show.
-const TOKEN_KEY = 'ce_token'
-
-export const getToken = () => localStorage.getItem(TOKEN_KEY)
-export const setToken = (t) => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY))
+// api.js — one place that talks to the server. Attaches the Supabase access token to
+// every request and turns server errors into thrown Errors the pages can show.
+import { supabase } from './supabase.js'
 
 // A random id for THIS browser, created once. The server allows one device to mark
 // only one student per event, which stops one phone marking for a group of friends.
@@ -16,18 +13,25 @@ export function getDeviceId() {
   return id
 }
 
+const API_BASE = (import.meta.env?.VITE_API_BASE || '').replace(/\/$/, '')
+
+async function authHeader() {
+  const { data: { session } } = await supabase.auth.getSession()
+  return session?.access_token ? { Authorization: 'Bearer ' + session.access_token } : {}
+}
+
 export async function api(path, { method = 'GET', body, raw } = {}) {
-  const res = await fetch('/api' + path, {
+  const res = await fetch(API_BASE + '/api' + path, {
     method,
     headers: {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
-      ...(getToken() ? { Authorization: 'Bearer ' + getToken() } : {}),
+      ...(await authHeader()),
     },
     body: body ? JSON.stringify(body) : undefined,
   })
-  if (res.status === 401 && getToken()) {
-    setToken(null)
-    window.dispatchEvent(new Event('ce-logout')) // AuthProvider listens and sends the user to /login
+  if (res.status === 401) {
+    await supabase.auth.signOut().catch(() => {})
+    window.dispatchEvent(new Event('ce-logout'))
   }
   if (raw) {
     if (!res.ok) throw new Error('Request failed')
@@ -43,13 +47,18 @@ export async function api(path, { method = 'GET', body, raw } = {}) {
   return data
 }
 
-// CSV download needs the login header, so we fetch it as a blob and click a temporary link.
-export async function downloadCsv(eventId, title) {
-  const res = await api(`/events/${eventId}/export.csv`, { raw: true })
+async function downloadBlob(path, filename) {
+  const res = await api(path, { raw: true })
   const url = URL.createObjectURL(await res.blob())
   const a = document.createElement('a')
   a.href = url
-  a.download = `${title.replace(/[^a-z0-9]+/gi, '_')}_attendance.csv`
+  a.download = filename
   a.click()
   URL.revokeObjectURL(url)
 }
+
+export const downloadCsv = (eventId, title) =>
+  downloadBlob(`/events/${eventId}/export.csv`, `${title.replace(/[^a-z0-9]+/gi, '_')}_attendance.csv`)
+
+export const downloadAllStudentsCsv = () =>
+  downloadBlob('/admin/students.csv', 'all_students.csv')

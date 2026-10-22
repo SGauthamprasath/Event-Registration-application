@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { api } from '../api.js'
 import { useAuth } from '../auth.jsx'
+import { supabase } from '../supabase.js'
 
 export default function Login() {
-  const { user, login } = useAuth()
+  const { user } = useAuth()
   const [cfg, setCfg] = useState(null)
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
@@ -12,40 +12,54 @@ export default function Login() {
   const [code, setCode] = useState('')
   const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [devEmail, setDevEmail] = useState('')
 
-  useEffect(() => { api('/config').then(setCfg).catch(() => setError('Cannot reach the server')) }, [])
+  // Only used for the domain hint — safe to call unauthenticated.
+  useEffect(() => {
+    const base = (import.meta.env?.VITE_API_BASE || '').replace(/\/$/, '')
+    fetch(base + '/api/config').then((r) => r.json()).then(setCfg).catch(() => setError('Cannot reach the server'))
+  }, [])
 
   if (user) return <Navigate to="/" replace />
+
+  const domain = cfg?.domain || 'psgitech.ac.in'
 
   async function onSend(e) {
     e?.preventDefault()
     setError(''); setInfo(''); setBusy(true)
     try {
-      await api('/auth/otp/request', { method: 'POST', body: { email } })
+      const norm = email.trim().toLowerCase()
+      if (!norm.endsWith('@' + domain)) throw new Error(`Use your @${domain} email`)
+      const { error } = await supabase.auth.signInWithOtp({
+        email: norm,
+        options: { shouldCreateUser: true },
+      })
+      if (error) throw error
+      setEmail(norm)
       setSent(true)
-      setInfo(`We mailed a code to ${email}. Check your inbox and spam.`)
-    } catch (err) { setError(err.message) }
-    finally { setBusy(false) }
+      setInfo(`We mailed a code to ${norm}. Check your inbox and spam.`)
+    } catch (err) {
+      setError(err.message || 'Could not send code.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function onVerify(e) {
     e.preventDefault()
     setError(''); setBusy(true)
     try {
-      const d = await api('/auth/otp/verify', { method: 'POST', body: { email, code } })
-      login(d.token, d.user)
-    } catch (err) { setError(err.message) }
-    finally { setBusy(false) }
-  }
-
-  async function onDev(e) {
-    e.preventDefault()
-    setError('')
-    try {
-      const d = await api('/auth/dev', { method: 'POST', body: { email: devEmail } })
-      login(d.token, d.user)
-    } catch (err) { setError(err.message) }
+      const { error } = await supabase.auth.verifyOtp({
+        email: email.trim().toLowerCase(),
+        token: code.trim(),
+        type: 'email',
+      })
+      if (error) throw error
+      // AuthProvider.onAuthStateChange picks up the new session and loads /api/me.
+    } catch (err) {
+      setError(err.message || 'Wrong or expired code.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -61,7 +75,7 @@ export default function Login() {
         <div style={{ marginTop: 10 }}>
           <div className="tag" style={{ marginBottom: 10 }}>// ACCESS CONTROL</div>
           <h1 style={{ marginBottom: 10 }}>Check in to Campus Events.</h1>
-          <p className="muted small">Sign in with your college email{cfg ? ` (@${cfg.domain})` : ''}. We'll mail a one-time code.</p>
+          <p className="muted small">Sign in with your college email (@{domain}). We'll mail a one-time code.</p>
         </div>
 
         {!sent ? (
@@ -69,7 +83,7 @@ export default function Login() {
             <div className="field">
               <span className="label">College email</span>
               <input className="input mono" type="email" required autoComplete="email"
-                placeholder={`you@${cfg?.domain || 'college.edu'}`}
+                placeholder={`you@${domain}`}
                 value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
             <button className="btn btn-primary btn-block" disabled={busy}>
@@ -97,17 +111,6 @@ export default function Login() {
         )}
         {info && <p className="muted small">{info}</p>}
         {error && <p className="err-text">{error}</p>}
-
-        {cfg?.devLogin && (
-          <form onSubmit={onDev} className="stack devbox">
-            <div className="tag" style={{ color: 'var(--warn)' }}>[DEV LOGIN ON] bypass for local testing</div>
-            <div className="field">
-              <span className="label">Dev email</span>
-              <input className="input mono" type="email" required placeholder={`you@${cfg.domain}`} value={devEmail} onChange={(e) => setDevEmail(e.target.value)} />
-            </div>
-            <button className="btn btn-ghost btn-block">Continue →</button>
-          </form>
-        )}
       </div>
     </div>
   )

@@ -1,10 +1,10 @@
-// index.js - the API. Each route does its checks cheapest-first and lets the
-// database constraints be the final word on duplicates.
+// index.js - the API, now backed by Supabase Postgres. Each route does cheap checks
+// first and relies on database constraints for the final word on duplicates.
 require('dotenv').config();
 
-for (const k of ['JWT_SECRET', 'QR_SECRET']) {
-  if (!process.env[k] || process.env[k].length < 16) {
-    console.error(`Missing or too-short ${k}. Copy .env.example to .env and set it (16+ characters).`);
+for (const k of ['QR_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) {
+  if (!process.env[k]) {
+    console.error(`Missing ${k}. See .env.example.`);
     process.exit(1);
   }
 }
@@ -13,84 +13,36 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
-const db = require('./db');
+const supabase = require('./supabase');
 const auth = require('./auth');
-const otp = require('./otp');
 const { getStatus, attendanceOpen } = require('./status');
 const { isValidToken, currentToken } = require('./qr');
 
 const app = express();
-app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1)); // so req.ip is the real client behind Render/Railway
+app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
 app.use(express.json({ limit: '50kb' }));
-app.use(cors());
+const corsOrigin = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
+  : true;
+app.use(cors({ origin: corsOrigin, credentials: false }));
 
 const { requireUser, requireTeacher, requireProfile } = auth;
 const asyncSafe = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const UNIQUE_VIOLATION = '23505';
 
-// ---------- config + login ----------
+// ---------- config ----------
 app.get('/api/config', (req, res) => {
-  res.json({
-    domain: auth.DOMAIN,
-    devLogin: auth.devLoginEnabled(),
-  });
-});
-
-const normEmail = (b) => String(b.email || '').trim().toLowerCase();
-
-function sendSession(res, email) {
-  const token = auth.issueSession(email);
-  const user = { ...db.prepare('SELECT * FROM users WHERE email = ?').get(email),
-                 role: auth.isTeacher(email) ? 'teacher' : 'student' };
-  res.json({ token, user: auth.publicUser(user) });
-}
-
-// Caps code requests per IP on top of the per-email resend cooldown in otp.js.
-const otpLimiter = rateLimit({
-  windowMs: 15 * 60_000,
-  limit: 30,
-  message: { error: 'Too many requests. Try again in a few minutes.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-app.post('/api/auth/otp/request', otpLimiter, asyncSafe(async (req, res) => {
-  const email = normEmail(req.body);
-  if (!auth.isCollegeEmail(email)) return res.status(400).json({ error: 'Use your @' + auth.DOMAIN + ' email' });
-  try {
-    const { retryAfter } = await otp.requestOtp(email);
-    if (retryAfter) return res.status(429).json({ error: `Wait ${retryAfter}s before asking for another code`, retryAfter });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[otp] send failed:', e.message);
-    res.status(502).json({ error: 'Could not send the email. Try again shortly.' });
-  }
-}));
-
-app.post('/api/auth/otp/verify', otpLimiter, (req, res) => {
-  const email = normEmail(req.body);
-  if (!auth.isCollegeEmail(email)) return res.status(400).json({ error: 'Use your @' + auth.DOMAIN + ' email' });
-  try {
-    otp.verifyOtp(email, req.body.code);
-  } catch (e) {
-    return res.status(401).json({ error: e.message });
-  }
-  sendSession(res, email);
-});
-
-// Local testing only. Disabled unless DEV_LOGIN=1 and NODE_ENV is not "production".
-app.post('/api/auth/dev', (req, res) => {
-  if (!auth.devLoginEnabled()) return res.status(404).json({ error: 'Not found' });
-  const email = normEmail(req.body);
-  if (!auth.isCollegeEmail(email)) return res.status(401).json({ error: 'Use a @' + auth.DOMAIN + ' email' });
-  sendSession(res, email);
+  res.json({ domain: auth.DOMAIN, supabaseUrl: process.env.SUPABASE_URL });
 });
 
 // ---------- profile ----------
-app.get('/api/me', requireUser, (req, res) => res.json({ user: auth.publicUser(req.user) }));
+app.get('/api/me', requireUser, (req, res) => {
+  res.json({ user: auth.publicUser(req.user, req.user.role) });
+});
 
-app.put('/api/me', requireUser, (req, res) => {
+app.put('/api/me', requireUser, asyncSafe(async (req, res) => {
   const name = String(req.body.name || '').trim().slice(0, 100);
   const department = String(req.body.department || '').trim().slice(0, 100);
   const year = Number(req.body.year);
@@ -99,17 +51,16 @@ app.put('/api/me', requireUser, (req, res) => {
   if (!name || !department || !roll_no || !Number.isInteger(year) || year < 1 || year > 5)
     return res.status(400).json({ error: 'Name, department, year (1-5) and roll number are required' });
 
-  try {
-    db.prepare('UPDATE users SET name=?, department=?, year=?, roll_no=? WHERE email=?')
-      .run(name, department, year, roll_no, req.user.email);
-  } catch (e) {
-    if (String(e.code).startsWith('SQLITE_CONSTRAINT'))
-      return res.status(409).json({ error: 'That roll number is already used by another account' });
-    throw e;
+  const { data, error } = await supabase.from('profiles')
+    .update({ name, department, year, roll_no })
+    .eq('email', req.user.email)
+    .select().maybeSingle();
+  if (error) {
+    if (error.code === UNIQUE_VIOLATION) return res.status(409).json({ error: 'That roll number is already used by another account' });
+    throw error;
   }
-  const row = db.prepare('SELECT * FROM users WHERE email = ?').get(req.user.email);
-  res.json({ user: auth.publicUser({ ...row, role: req.user.role }) });
-});
+  res.json({ user: auth.publicUser(data || req.user, req.user.role) });
+}));
 
 // ---------- events ----------
 const isHttpUrl = (s) => { try { return ['http:', 'https:'].includes(new URL(s).protocol); } catch { return false; } };
@@ -140,90 +91,95 @@ function parseEventBody(b) {
   };
 }
 
-app.get('/api/events', requireUser, (req, res) => {
+async function getEvent(id) {
+  const { data } = await supabase.from('events').select('*').eq('id', Number(id)).maybeSingle();
+  return data || null;
+}
+
+app.get('/api/events', requireUser, asyncSafe(async (req, res) => {
   const now = Date.now();
-  const rows = db.prepare(`
-    SELECT e.*,
-      EXISTS (SELECT 1 FROM registrations r WHERE r.event_id = e.id AND r.email = ?) AS registered,
-      EXISTS (SELECT 1 FROM attendance a WHERE a.event_id = e.id AND a.email = ?)    AS attended,
-      (SELECT COUNT(*) FROM registrations r WHERE r.event_id = e.id)                 AS registered_count,
-      (SELECT COUNT(*) FROM attendance a WHERE a.event_id = e.id)                    AS checked_in
-    FROM events e
-    ORDER BY e.starts_at
-  `).all(req.user.email, req.user.email);
+  const email = req.user.email;
+  const [{ data: events = [] }, { data: mineReg = [] }, { data: mineAttend = [] }, { data: allReg = [] }, { data: allAttend = [] }] = await Promise.all([
+    supabase.from('events').select('*').order('starts_at'),
+    supabase.from('registrations').select('event_id').eq('email', email),
+    supabase.from('attendance').select('event_id').eq('email', email),
+    supabase.from('registrations').select('event_id'),
+    supabase.from('attendance').select('event_id'),
+  ]);
+  const regSet = new Set(mineReg.map((r) => r.event_id));
+  const attSet = new Set(mineAttend.map((r) => r.event_id));
+  const regCount = new Map(); for (const r of allReg) regCount.set(r.event_id, (regCount.get(r.event_id) || 0) + 1);
+  const attCount = new Map(); for (const r of allAttend) attCount.set(r.event_id, (attCount.get(r.event_id) || 0) + 1);
 
   res.json({
-    serverTime: now, // lets phones with a wrong clock stay in sync
-    events: rows.map((e) => ({
+    serverTime: now,
+    events: events.map((e) => ({
       ...e,
-      registered: !!e.registered,
-      attended: !!e.attended,
+      registered: regSet.has(e.id),
+      attended: attSet.has(e.id),
+      registered_count: regCount.get(e.id) || 0,
+      checked_in: attCount.get(e.id) || 0,
       status: getStatus(e, now),
       attendance_open: attendanceOpen(e, now),
     })),
   });
-});
+}));
 
-app.post('/api/events', requireTeacher, (req, res) => {
+app.post('/api/events', requireTeacher, asyncSafe(async (req, res) => {
   const { value, error } = parseEventBody(req.body);
   if (error) return res.status(400).json({ error });
-  const r = db.prepare(`
-    INSERT INTO events (title, description, brochure_url, venue, starts_at, ends_at, attendance_closes_at)
-    VALUES (@title, @description, @brochure_url, @venue, @starts_at, @ends_at, @attendance_closes_at)
-  `).run(value);
-  res.json({ id: r.lastInsertRowid });
-});
+  const { data, error: dbErr } = await supabase.from('events').insert(value).select('id').single();
+  if (dbErr) throw dbErr;
+  res.json({ id: data.id });
+}));
 
-// Editing times is how a teacher ends early or extends; status follows automatically.
-app.put('/api/events/:id', requireTeacher, (req, res) => {
+app.put('/api/events/:id', requireTeacher, asyncSafe(async (req, res) => {
   const { value, error } = parseEventBody(req.body);
   if (error) return res.status(400).json({ error });
-  const r = db.prepare(`
-    UPDATE events SET title=@title, description=@description, brochure_url=@brochure_url, venue=@venue,
-      starts_at=@starts_at, ends_at=@ends_at, attendance_closes_at=@attendance_closes_at
-    WHERE id=@id
-  `).run({ ...value, id: Number(req.params.id) });
-  if (!r.changes) return res.status(404).json({ error: 'Event not found' });
+  const { data, error: dbErr } = await supabase.from('events').update(value).eq('id', Number(req.params.id)).select('id').maybeSingle();
+  if (dbErr) throw dbErr;
+  if (!data) return res.status(404).json({ error: 'Event not found' });
   res.json({ ok: true });
-});
+}));
 
-const getEvent = (id) => db.prepare('SELECT * FROM events WHERE id = ?').get(Number(id));
+app.delete('/api/events/:id', requireTeacher, asyncSafe(async (req, res) => {
+  const { error } = await supabase.from('events').delete().eq('id', Number(req.params.id));
+  if (error) throw error;
+  res.json({ ok: true });
+}));
 
 // ---------- registration ----------
-app.post('/api/events/:id/register', requireUser, requireProfile, (req, res) => {
-  const ev = getEvent(req.params.id);
+app.post('/api/events/:id/register', requireUser, requireProfile, asyncSafe(async (req, res) => {
+  const ev = await getEvent(req.params.id);
   if (!ev) return res.status(404).json({ error: 'Event not found' });
   if (getStatus(ev) !== 'upcoming') return res.status(403).json({ error: 'Registration is closed' });
-  try {
-    db.prepare('INSERT INTO registrations (event_id, email) VALUES (?, ?)').run(ev.id, req.user.email);
-    res.json({ status: 'registered' });
-  } catch (e) {
-    if (String(e.code).startsWith('SQLITE_CONSTRAINT'))
-      return res.status(409).json({ error: 'Already registered' });
-    throw e;
+  const { error } = await supabase.from('registrations').insert({ event_id: ev.id, email: req.user.email });
+  if (error) {
+    if (error.code === UNIQUE_VIOLATION) return res.status(409).json({ error: 'Already registered' });
+    throw error;
   }
-});
+  res.json({ status: 'registered' });
+}));
 
-// ---------- rotating QR (teacher's projector page polls this) ----------
-app.get('/api/events/:id/qr', requireTeacher, (req, res) => {
-  const ev = getEvent(req.params.id);
+// ---------- rotating QR ----------
+app.get('/api/events/:id/qr', requireTeacher, asyncSafe(async (req, res) => {
+  const ev = await getEvent(req.params.id);
   if (!ev) return res.status(404).json({ error: 'Event not found' });
   if (!attendanceOpen(ev)) return res.status(403).json({ status: 'closed' });
   res.json(currentToken(ev.id));
-});
+}));
 
-// ---------- attendance (student scans the projected QR) ----------
+// ---------- attendance (scan) ----------
 const attendLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 12,                                  // 12 tries per minute per student
-  keyGenerator: (req) => req.user.email,
+  limit: 12,
+  keyGenerator: (req) => req.user?.email || ipKeyGenerator(req),
   message: { status: 'too_many_attempts' },
-  standardHeaders: true,
-  legacyHeaders: false,
+  standardHeaders: true, legacyHeaders: false,
 });
 
-app.post('/api/events/:id/attend', requireUser, requireProfile, attendLimiter, (req, res) => {
-  const ev = getEvent(req.params.id);
+app.post('/api/events/:id/attend', requireUser, requireProfile, attendLimiter, asyncSafe(async (req, res) => {
+  const ev = await getEvent(req.params.id);
   if (!ev) return res.status(404).json({ status: 'not_found' });
 
   const now = Date.now();
@@ -235,97 +191,171 @@ app.post('/api/events/:id/attend', requireUser, requireProfile, attendLimiter, (
     return res.status(400).json({ status: 'bad_request' });
   if (!isValidToken(ev.id, token)) return res.status(400).json({ status: 'expired' });
 
-  const reg = db.prepare('SELECT 1 FROM registrations WHERE event_id=? AND email=?').get(ev.id, req.user.email);
+  const { data: reg } = await supabase.from('registrations').select('email').eq('event_id', ev.id).eq('email', req.user.email).maybeSingle();
   if (!reg) return res.status(403).json({ status: 'not_registered' });
 
-  const already = () => db.prepare('SELECT 1 FROM attendance WHERE event_id=? AND email=?').get(ev.id, req.user.email);
-  if (already()) return res.json({ status: 'duplicate' });
+  const alreadyMine = async () => {
+    const { data } = await supabase.from('attendance').select('email').eq('event_id', ev.id).eq('email', req.user.email).maybeSingle();
+    return !!data;
+  };
+  if (await alreadyMine()) return res.json({ status: 'duplicate' });
 
-  try {
-    db.prepare(`INSERT INTO attendance (event_id, email, device_id, ip, user_agent, method)
-                VALUES (?, ?, ?, ?, ?, 'scan')`)
-      .run(ev.id, req.user.email, deviceId, req.ip, (req.get('user-agent') || '').slice(0, 300));
-    res.json({ status: 'marked' });
-  } catch (e) {
-    if (!String(e.code).startsWith('SQLITE_CONSTRAINT')) throw e;
-    // Either a double-tap race on the same student, or this phone already marked someone else.
-    return res.status(already() ? 200 : 403).json({ status: already() ? 'duplicate' : 'device_used' });
-  }
-});
+  const { error } = await supabase.from('attendance').insert({
+    event_id: ev.id,
+    email: req.user.email,
+    device_id: deviceId,
+    ip: req.ip,
+    user_agent: (req.get('user-agent') || '').slice(0, 300),
+    method: 'scan',
+  });
+  if (!error) return res.json({ status: 'marked' });
+  if (error.code !== UNIQUE_VIOLATION) throw error;
+  // Either my own row (duplicate) or the (event_id, device_id) partial unique index (device_used).
+  return res.status((await alreadyMine()) ? 200 : 403).json({ status: (await alreadyMine()) ? 'duplicate' : 'device_used' });
+}));
 
 // ---------- teacher tools ----------
-function eventStats(eventId) {
-  const registered = db.prepare('SELECT COUNT(*) c FROM registrations WHERE event_id=?').get(eventId).c;
-  const attended = db.prepare('SELECT COUNT(*) c FROM attendance WHERE event_id=?').get(eventId).c;
-  return { registered, attended, absent: registered - attended };
+async function eventStats(eventId) {
+  const [{ count: registered = 0 }, { count: attended = 0 }] = await Promise.all([
+    supabase.from('registrations').select('*', { count: 'exact', head: true }).eq('event_id', eventId),
+    supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('event_id', eventId),
+  ]);
+  return { registered, attended, absent: Math.max(0, registered - attended) };
 }
 
-app.get('/api/events/:id/stats', requireTeacher, (req, res) => {
-  const ev = getEvent(req.params.id);
+app.get('/api/events/:id/stats', requireTeacher, asyncSafe(async (req, res) => {
+  const ev = await getEvent(req.params.id);
   if (!ev) return res.status(404).json({ error: 'Event not found' });
-  res.json(eventStats(ev.id));
-});
+  res.json(await eventStats(ev.id));
+}));
 
-app.post('/api/events/:id/manual', requireTeacher, (req, res) => {
-  const ev = getEvent(req.params.id);
+app.post('/api/events/:id/manual', requireTeacher, asyncSafe(async (req, res) => {
+  const ev = await getEvent(req.params.id);
   if (!ev) return res.status(404).json({ error: 'Event not found' });
   if (getStatus(ev) === 'upcoming') return res.status(403).json({ error: 'Event has not started' });
 
   const roll = String(req.body.roll_no || '').trim().toUpperCase().replace(/\s+/g, '');
-  const student = db.prepare(`
-    SELECT u.email, u.name, u.roll_no FROM registrations r
-    JOIN users u ON u.email = r.email
-    WHERE r.event_id = ? AND u.roll_no = ?
-  `).get(ev.id, roll);
-  if (!student) return res.status(404).json({ status: 'not_registered', roll_no: roll });
+  const { data: profile } = await supabase.from('profiles').select('email, name, roll_no').eq('roll_no', roll).maybeSingle();
+  if (!profile) return res.status(404).json({ status: 'not_registered', roll_no: roll });
 
-  const r = db.prepare(`INSERT OR IGNORE INTO attendance (event_id, email, method, ip) VALUES (?, ?, 'manual', ?)`)
-    .run(ev.id, student.email, req.ip);
-  res.json({ status: r.changes ? 'marked' : 'duplicate', student: { name: student.name, roll_no: student.roll_no } });
-});
+  const { data: reg } = await supabase.from('registrations').select('email').eq('event_id', ev.id).eq('email', profile.email).maybeSingle();
+  if (!reg) return res.status(404).json({ status: 'not_registered', roll_no: roll });
 
-// CSV cells starting with = + - @ are executed as formulas by Excel, so neutralise them.
+  const { error } = await supabase.from('attendance').insert({
+    event_id: ev.id, email: profile.email, method: 'manual', ip: req.ip,
+  });
+  if (error && error.code !== UNIQUE_VIOLATION) throw error;
+  res.json({ status: error ? 'duplicate' : 'marked', student: { name: profile.name, roll_no: profile.roll_no } });
+}));
+
+// ---------- CSV helpers ----------
 const csvCell = (v) => {
   let s = v == null ? '' : String(v);
   if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
-const istTime = (sqliteUtc) =>
-  sqliteUtc
-    ? new Date(sqliteUtc.replace(' ', 'T') + 'Z').toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
-    : '';
+const istTime = (iso) => iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '';
 
-app.get('/api/events/:id/export.csv', requireTeacher, (req, res) => {
-  const ev = getEvent(req.params.id);
+app.get('/api/events/:id/export.csv', requireTeacher, asyncSafe(async (req, res) => {
+  const ev = await getEvent(req.params.id);
   if (!ev) return res.status(404).json({ error: 'Event not found' });
 
-  // LEFT JOIN: every registered student appears once; no attendance row means Absent.
-  const rows = db.prepare(`
-    SELECT u.roll_no, u.name, u.department, u.year, u.email,
-           r.registered_at, a.marked_at, a.method
-    FROM registrations r
-    JOIN users u ON u.email = r.email
-    LEFT JOIN attendance a ON a.event_id = r.event_id AND a.email = r.email
-    WHERE r.event_id = ?
-    ORDER BY u.roll_no
-  `).all(ev.id);
+  const { data: regs = [] } = await supabase
+    .from('registrations')
+    .select('registered_at, email, profiles!inner(email, name, department, year, roll_no)')
+    .eq('event_id', ev.id);
+  const { data: atts = [] } = await supabase.from('attendance').select('email, marked_at, method').eq('event_id', ev.id);
+  const attByEmail = new Map(atts.map((a) => [a.email, a]));
+
+  const rows = regs
+    .map((r) => ({
+      roll_no: r.profiles?.roll_no, name: r.profiles?.name, department: r.profiles?.department,
+      year: r.profiles?.year, email: r.email, registered_at: r.registered_at,
+      att: attByEmail.get(r.email),
+    }))
+    .sort((a, b) => String(a.roll_no || '').localeCompare(String(b.roll_no || '')));
 
   const header = ['Roll No', 'Name', 'Department', 'Year', 'Email', 'Registered At (IST)', 'Status', 'Marked At (IST)', 'Method'];
   const lines = [header.map(csvCell).join(',')];
   for (const r of rows) {
     lines.push([
       r.roll_no, r.name, r.department, r.year, r.email, istTime(r.registered_at),
-      r.marked_at ? 'Attended' : 'Absent', istTime(r.marked_at), r.method || '',
+      r.att ? 'Attended' : 'Absent', istTime(r.att?.marked_at), r.att?.method || '',
     ].map(csvCell).join(','));
   }
 
   const safeName = ev.title.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '').slice(0, 50) || 'event';
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${safeName}_attendance.csv"`);
-  res.send('﻿' + lines.join('\r\n')); // BOM so Excel opens it as UTF-8
-});
+  res.send('﻿' + lines.join('\r\n'));
+}));
 
-// ---------- serve the built React app (single deployable) ----------
+// ---------- admin ----------
+app.get('/api/admin/overview', requireTeacher, asyncSafe(async (req, res) => {
+  const [{ data: events = [] }, { data: allReg = [] }, { data: allAtt = [] }, { count: totalStudents = 0 }, { data: profiles = [] }] = await Promise.all([
+    supabase.from('events').select('*').order('starts_at'),
+    supabase.from('registrations').select('event_id'),
+    supabase.from('attendance').select('event_id'),
+    supabase.from('profiles').select('*', { count: 'exact', head: true }),
+    supabase.from('profiles').select('department'),
+  ]);
+  const regCount = new Map(); for (const r of allReg) regCount.set(r.event_id, (regCount.get(r.event_id) || 0) + 1);
+  const attCount = new Map(); for (const r of allAtt) attCount.set(r.event_id, (attCount.get(r.event_id) || 0) + 1);
+  const byDeptMap = new Map();
+  for (const p of profiles) {
+    const d = p.department || 'Unspecified';
+    byDeptMap.set(d, (byDeptMap.get(d) || 0) + 1);
+  }
+  res.json({
+    events: events.map((e) => ({ id: e.id, title: e.title, venue: e.venue, starts_at: e.starts_at, ends_at: e.ends_at, registered: regCount.get(e.id) || 0, attended: attCount.get(e.id) || 0 })),
+    totalStudents,
+    totalRegistrations: allReg.length,
+    totalAttendances: allAtt.length,
+    byDept: [...byDeptMap.entries()].map(([department, n]) => ({ department, n })).sort((a, b) => b.n - a.n),
+  });
+}));
+
+app.get('/api/admin/students', requireTeacher, asyncSafe(async (req, res) => {
+  const [{ data: profiles = [] }, { data: regs = [] }, { data: atts = [] }] = await Promise.all([
+    supabase.from('profiles').select('*').order('name'),
+    supabase.from('registrations').select('email'),
+    supabase.from('attendance').select('email'),
+  ]);
+  const regBy = new Map(); for (const r of regs) regBy.set(r.email, (regBy.get(r.email) || 0) + 1);
+  const attBy = new Map(); for (const r of atts) attBy.set(r.email, (attBy.get(r.email) || 0) + 1);
+  res.json({
+    students: profiles.map((p) => ({
+      email: p.email, name: p.name, department: p.department, year: p.year, roll_no: p.roll_no,
+      created_at: p.created_at,
+      registrations: regBy.get(p.email) || 0,
+      attendances: attBy.get(p.email) || 0,
+    })),
+  });
+}));
+
+app.get('/api/admin/students.csv', requireTeacher, asyncSafe(async (req, res) => {
+  const [{ data: profiles = [] }, { data: regs = [] }, { data: atts = [] }] = await Promise.all([
+    supabase.from('profiles').select('*').order('name'),
+    supabase.from('registrations').select('email'),
+    supabase.from('attendance').select('email'),
+  ]);
+  const regBy = new Map(); for (const r of regs) regBy.set(r.email, (regBy.get(r.email) || 0) + 1);
+  const attBy = new Map(); for (const r of atts) attBy.set(r.email, (attBy.get(r.email) || 0) + 1);
+
+  const header = ['Roll No', 'Name', 'Department', 'Year', 'Email', 'Signed Up (IST)', 'Registrations', 'Attendances'];
+  const lines = [header.map(csvCell).join(',')];
+  for (const p of profiles) {
+    lines.push([
+      p.roll_no || '', p.name || '', p.department || '', p.year || '', p.email,
+      istTime(p.created_at), regBy.get(p.email) || 0, attBy.get(p.email) || 0,
+    ].map(csvCell).join(','));
+  }
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="all_students.csv"');
+  res.send('﻿' + lines.join('\r\n'));
+}));
+
+// ---------- serve built React (single deployable) ----------
 const dist = path.join(__dirname, '..', '..', 'client', 'dist');
 if (fs.existsSync(dist)) {
   app.use(express.static(dist));
@@ -336,7 +366,7 @@ if (fs.existsSync(dist)) {
 }
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
-app.use((err, req, res, next) => {            // last-resort error handler: never leak internals
+app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: 'Something went wrong' });
 });

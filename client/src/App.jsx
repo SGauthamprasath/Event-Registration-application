@@ -7,6 +7,7 @@ import Attend from './pages/Attend.jsx'
 import EventForm from './pages/EventForm.jsx'
 import TeacherEvent from './pages/TeacherEvent.jsx'
 import EventDetail from './pages/EventDetail.jsx'
+import Admin from './pages/Admin.jsx'
 import { useEvents } from './useEvents.js'
 
 function Brand() {
@@ -65,9 +66,9 @@ function TopBar() {
 
       <nav className="nav">
         <NavLink to="/" end className={({ isActive }) => isActive ? 'active' : ''}>Events</NavLink>
-        {isTeacher && <NavLink to="/teacher/console" className={({ isActive }) => isActive ? 'active' : ''}>Control Room</NavLink>}
         <NavLink to="/my" className={({ isActive }) => isActive ? 'active' : ''}>My Registrations</NavLink>
-        <NavLink to="/schedule" className={({ isActive }) => isActive ? 'active' : ''}>Schedule</NavLink>
+        {isTeacher && <NavLink to="/teacher/console" className={({ isActive }) => isActive ? 'active' : ''}>Control Room</NavLink>}
+        {isTeacher && <NavLink to="/admin" className={({ isActive }) => isActive ? 'active' : ''}>Admin</NavLink>}
       </nav>
 
       <div className="spacer" />
@@ -109,7 +110,7 @@ export default function App() {
           <Route path="/profile" element={<Protected allowIncomplete><Profile /></Protected>} />
           <Route path="/" element={<Protected><Dashboard /></Protected>} />
           <Route path="/my" element={<Protected><Dashboard filter="mine" /></Protected>} />
-          <Route path="/schedule" element={<Protected><Dashboard filter="schedule" /></Protected>} />
+          <Route path="/admin" element={<Protected teacherOnly><Admin /></Protected>} />
           <Route path="/events/:id" element={<Protected><EventDetail /></Protected>} />
           <Route path="/events/:id/attend" element={<Protected><Attend /></Protected>} />
           <Route path="/teacher/console" element={<Protected teacherOnly><TeacherConsoleHome /></Protected>} />

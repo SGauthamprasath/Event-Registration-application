@@ -51,8 +51,9 @@ function FeatureEvent({ ev, isTeacher, onRegistered }) {
   const live = ev.status === 'live'
 
   return (
-    <article className="feature-event">
-      {ev.brochure_url && <div className="bg" style={{ backgroundImage: `url(${ev.brochure_url})` }} />}
+    <article className={`feature-event ${live ? 'is-live' : 'is-upcoming'}`}>
+      <div className="fe-noise" aria-hidden />
+      <div className="fe-stamp" aria-hidden>#{String(ev.id).padStart(2, '0')}</div>
       <div className="fe-top">
         <div className="row" style={{ gap: 10 }}>
           <span className={`pill ${live ? 'live' : 'primary'}`}>
@@ -102,6 +103,9 @@ function FeatureEvent({ ev, isTeacher, onRegistered }) {
   )
 }
 
+const ACCENTS = ['acc-violet', 'acc-coral', 'acc-mint', 'acc-amber', 'acc-pink']
+const TILTS = ['tilt-l', 'tilt-r', 'tilt-0', 'tilt-r', 'tilt-l']
+
 function EventCard({ ev, isTeacher, onRegistered }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -112,60 +116,91 @@ function EventCard({ ev, isTeacher, onRegistered }) {
     setBusy(false)
   }
 
+  const accent = ACCENTS[ev.id % ACCENTS.length]
+  const tilt = TILTS[ev.id % TILTS.length]
+  const starts = new Date(ev.starts_at)
+  const dayNum = starts.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric' })
+  const monthShort = starts.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short' }).toUpperCase()
+  const weekday = starts.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short' }).toUpperCase()
+  const timeRange = `${timeLabel(ev.starts_at)}–${timeLabel(ev.ends_at)}`
+
   return (
-    <article className="event-card">
-      <div className="ec-media">
-        {ev.brochure_url
-          ? <img src={ev.brochure_url} alt="" loading="lazy" />
-          : <div className="ec-placeholder">{(ev.title[0] || '•').toUpperCase()}</div>}
-        <div className="ec-top">
-          <span className={`pill ${ev.status === 'live' ? 'live' : ev.status === 'upcoming' ? 'primary' : 'ghost'}`}>
+    <article className={`zine-card ${accent} ${tilt} ${ev.status}`}>
+      <span className="tape" aria-hidden />
+      <div className="zc-head">
+        <div className="zc-datestamp">
+          <div className="dow">{weekday}</div>
+          <div className="day">{dayNum}</div>
+          <div className="mon">{monthShort}</div>
+        </div>
+        <div className="zc-head-right">
+          <span className={`status-pill ${ev.status}`}>
             {ev.status === 'live' && <i className="dot pulse" />}
             {LABEL[ev.status]}
           </span>
-          <span className="pill ghost">{ev.registered_count} registered</span>
+          <div className="zc-count">
+            <span className="zc-count-n">{ev.registered_count}</span>
+            <span className="zc-count-l">registered</span>
+          </div>
         </div>
       </div>
-      <div className="ec-body">
-        <div className="ec-meta">{dateLabel(ev.starts_at)} · {timeLabel(ev.starts_at)} IST · {ev.venue || 'TBA'}</div>
-        <h3 className="ec-title"><Link to={`/events/${ev.id}`} style={{ color: 'inherit' }}>{ev.title}</Link></h3>
-        {ev.description && <p className="ec-desc">{ev.description}</p>}
-        <div className="ec-foot">
-          {!isTeacher ? (
-            <>
-              <Link className="btn btn-ghost btn-sm" to={`/events/${ev.id}`}>Details</Link>
-              {ev.status === 'upcoming' && !ev.registered && (
-                <button className="btn btn-primary btn-sm" onClick={register} disabled={busy}>{busy ? '…' : 'Register'}</button>
-              )}
-              {ev.status === 'upcoming' && ev.registered && (
-                <span className="ec-status-text ok">Registered</span>
-              )}
-              {ev.status === 'live' && ev.registered && !ev.attended && ev.attendance_open && (
-                <Link className="btn btn-live btn-sm" to={`/events/${ev.id}/attend`}>Mark present</Link>
-              )}
-              {ev.status === 'live' && ev.attended && <span className="ec-status-text ok">Attended</span>}
-              {ev.status === 'ended' && (ev.attended ? <span className="ec-status-text ok">You attended</span> : ev.registered ? <span className="ec-status-text">Not marked</span> : <span className="ec-status-text">Ended</span>)}
-            </>
-          ) : (
-            <>
-              <Link className="btn btn-ghost btn-sm" to={`/events/${ev.id}`}>Details</Link>
-              <div className="row" style={{ gap: 8 }}>
-                <Link className="btn btn-ghost btn-sm" to={`/teacher/events/${ev.id}/edit`}>Edit</Link>
-                <Link className="btn btn-primary btn-sm" to={`/teacher/events/${ev.id}`}>Open</Link>
-              </div>
-            </>
-          )}
-        </div>
-        {msg && <p className="err-text">{msg}</p>}
+
+      <Link to={`/events/${ev.id}`} className="zc-title-link">
+        <h3 className="zc-title">{ev.title}</h3>
+      </Link>
+
+      {ev.description && <p className="zc-desc">{ev.description}</p>}
+
+      <div className="zc-meta">
+        <span className="zc-meta-pill">⏱ {timeRange} IST</span>
+        <span className="zc-meta-pill">📍 {ev.venue || 'TBA'}</span>
       </div>
+
+      <div className="zc-foot">
+        {!isTeacher ? (
+          <>
+            <Link className="btn btn-ghost btn-sm" to={`/events/${ev.id}`}>Details</Link>
+            {ev.status === 'upcoming' && !ev.registered && (
+              <button className="btn btn-primary btn-sm" onClick={register} disabled={busy}>{busy ? '…' : 'Register'}</button>
+            )}
+            {ev.status === 'upcoming' && ev.registered && <span className="pill ok"><i className="dot" />You're in</span>}
+            {ev.status === 'live' && ev.registered && !ev.attended && ev.attendance_open && (
+              <Link className="btn btn-live btn-sm" to={`/events/${ev.id}/attend`}>Mark present</Link>
+            )}
+            {ev.status === 'live' && ev.attended && <span className="pill ok"><i className="dot" />Checked in</span>}
+            {ev.status === 'ended' && (ev.attended ? <span className="pill ok">You attended</span> : ev.registered ? <span className="muted small">Not marked present</span> : <span className="muted small">Ended</span>)}
+          </>
+        ) : (
+          <>
+            <Link className="btn btn-ghost btn-sm" to={`/events/${ev.id}`}>Details</Link>
+            <div className="row" style={{ gap: 8 }}>
+              <Link className="btn btn-ghost btn-sm" to={`/teacher/events/${ev.id}/edit`}>Edit</Link>
+              <Link className="btn btn-primary btn-sm" to={`/teacher/events/${ev.id}`}>Open</Link>
+            </div>
+          </>
+        )}
+      </div>
+      {msg && <p className="err-text" style={{ marginTop: 8 }}>{msg}</p>}
     </article>
   )
 }
 
-function PassCard({ user }) {
+function PassCard({ user, current, onRegister, registering }) {
   const token = `${user.roll_no || user.email}`
+  const live = current?.status === 'live'
+  const registered = !!current?.registered
+  const attended = !!current?.attended
+
+  let stateCls = 'none'
+  let stateText = 'No live event'
+  if (current && live && attended) { stateCls = 'ok'; stateText = 'Checked in' }
+  else if (current && live && registered) { stateCls = 'ok'; stateText = 'Registered · live now' }
+  else if (current && live && !registered) { stateCls = 'warn'; stateText = 'Not registered' }
+  else if (current && !live && registered) { stateCls = 'ok'; stateText = "You're in" }
+  else if (current && !live && !registered) { stateCls = 'warn'; stateText = 'Not registered' }
+
   return (
-    <div className="pass">
+    <div className={`pass pass-${stateCls}`}>
       <div className="pass-head">
         <div className="ttl">
           <div className="logo-sq" style={{ width: 30, height: 30 }}><Zap /></div>
@@ -192,12 +227,54 @@ function PassCard({ user }) {
         )}
       </div>
 
+      {current && (
+        <div className={`pass-current state-${stateCls}`}>
+          <div className="pc-head">
+            <div className="tag">{live ? 'Live now' : 'Next up'}</div>
+            <span className={`pill ${stateCls === 'ok' ? 'ok' : stateCls === 'warn' ? 'warn' : 'ghost'}`}>
+              {stateCls === 'ok' && <i className="dot" />}
+              {stateCls === 'warn' && <i className="dot" />}
+              {stateText}
+            </span>
+          </div>
+          <Link to={`/events/${current.id}`} className="pc-title">{current.title}</Link>
+          <div className="pc-meta">
+            {timeLabel(current.starts_at)} IST · {current.venue || 'TBA'}
+          </div>
+          {!registered && !live && (
+            <button className="btn btn-primary btn-sm btn-block" onClick={onRegister} disabled={registering}>
+              {registering ? 'Registering…' : 'Register for this event →'}
+            </button>
+          )}
+          {!registered && live && (
+            <div className="pass-warn-note">Registration closes when an event goes live.</div>
+          )}
+          {registered && live && !attended && current.attendance_open && (
+            <Link to={`/events/${current.id}/attend`} className="btn btn-live btn-sm btn-block">
+              <QrCode /> Mark attendance
+            </Link>
+          )}
+        </div>
+      )}
+
       <div className="pass-qr">
-        <div className="qr-tile"><QRCodeSVG value={token} size={180} marginSize={0} /></div>
+        <div className="qr-tile"><QRCodeSVG value={token} size={160} marginSize={0} /></div>
       </div>
       <div className="pass-token">{token}</div>
     </div>
   )
+}
+
+function StudentPassSection({ user, events, reload }) {
+  const [busy, setBusy] = useState(false)
+  const current = events.find((e) => e.status === 'live') || events.find((e) => e.status === 'upcoming')
+  async function register() {
+    if (!current) return
+    setBusy(true)
+    try { await api(`/events/${current.id}/register`, { method: 'POST' }); await reload() } catch {}
+    setBusy(false)
+  }
+  return <PassCard user={user} current={current} onRegister={register} registering={busy} />
 }
 
 function VenueGrid({ events }) {
@@ -344,7 +421,7 @@ export default function Dashboard({ filter }) {
         </div>
 
         <aside className="stack" style={{ gap: 20 }}>
-          {user.role === 'student' && <PassCard user={user} />}
+          {user.role === 'student' && <StudentPassSection user={user} events={events} reload={reload} />}
           <VenueGrid events={events} />
         </aside>
       </div>
