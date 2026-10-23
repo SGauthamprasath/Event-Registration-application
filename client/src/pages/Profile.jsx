@@ -68,7 +68,7 @@ export default function Profile() {
 
         <div className="field">
           <span className="label">Roll number</span>
-          <input className="input mono" required value={f.roll_no} onChange={set('roll_no')} placeholder="e.g. 22AD001" />
+          <input className="input mono" required value={f.roll_no} onChange={set('roll_no')} placeholder="e.g. 7155232403011" />
         </div>
 
         {error && <p className="err-text">{error}</p>}
