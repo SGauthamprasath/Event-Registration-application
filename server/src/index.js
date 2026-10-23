@@ -254,14 +254,16 @@ app.post('/api/events/:id/attendance', requireTeacher, asyncSafe(async (req, res
   res.json({ attendance_open: attendanceOpen({ ...ev, ...patch }, now) });
 }));
 
-// Control-room switch for registration (it is otherwise open until the event ends).
+// Control-room switch for registration (it is otherwise open until the event ends). Works on any
+// event, so a teacher can also reopen one that has already ended.
 app.post('/api/events/:id/registration', requireTeacher, asyncSafe(async (req, res) => {
   const ev = await getEvent(req.params.id);
   if (!ev) return res.status(404).json({ error: 'Event not found' });
-  const { error } = await supabase.from('events').update({ registration_closed: !req.body.open }).eq('id', ev.id);
+  const patch = { registration_override: !!req.body.open };
+  const { error } = await supabase.from('events').update(patch).eq('id', ev.id);
   if (error) throw error;
   dropSnapshot();
-  res.json({ registration_open: registrationOpen({ ...ev, registration_closed: !req.body.open }) });
+  res.json({ registration_open: registrationOpen({ ...ev, ...patch }) });
 }));
 
 app.delete('/api/events/:id', requireTeacher, asyncSafe(async (req, res) => {

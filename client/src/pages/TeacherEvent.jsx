@@ -124,11 +124,9 @@ export default function TeacherEvent() {
           <button className={`btn ${ev.attendance_open ? 'btn-ghost' : 'btn-live'}`} onClick={toggleAttendance} disabled={toggling}>
             {toggling ? 'Saving…' : ev.attendance_open ? 'Close attendance now' : 'Open attendance now'}
           </button>
-          {ev.status !== 'ended' && (
-            <button className={`btn ${ev.registration_open ? 'btn-ghost' : 'btn-primary'}`} onClick={toggleRegistration} disabled={toggling}>
-              {toggling ? 'Saving…' : ev.registration_open ? 'Close registration' : 'Open registration'}
-            </button>
-          )}
+          <button className={`btn ${ev.registration_open ? 'btn-ghost' : 'btn-primary'}`} onClick={toggleRegistration} disabled={toggling}>
+            {toggling ? 'Saving…' : ev.registration_open ? 'Close registration' : 'Open registration'}
+          </button>
           {toggleErr && <p className="err-text">{toggleErr}</p>}
         </div>
       </div>

@@ -48,7 +48,12 @@ export default function Attend() {
     }
 
     scanner
-      .start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 240, height: 240 } }, onScan, () => {})
+      .start({ facingMode: 'environment' }, {
+        fps: 10,
+        aspectRatio: 1,
+        // Scan area follows the box size: most of the view on any phone, not a fixed 240px.
+        qrbox: (w, h) => { const s = Math.floor(Math.min(w, h) * 0.8); return { width: s, height: s } },
+      }, onScan, () => {})
       .catch(() => !cancelled && setCamError('Camera not available. Allow camera access and make sure the site is on HTTPS.'))
 
     return () => {

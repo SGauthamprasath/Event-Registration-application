@@ -973,9 +973,14 @@ p { margin: 0 0 10px; color: var(--ink-2); }
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 20px;
 }
 .scanner-wrap h1 { font-size: 28px; text-transform: uppercase; }
+/* Phones: give the camera the full width instead of a card inside a card. */
+@media (max-width: 600px) {
+  .scanner-wrap { margin: 8px auto; padding: 12px; border: 0; background: transparent; }
+  .scanner-wrap h1 { font-size: 22px; }
+}
 .reader {
   position: relative;
-  width: 100%; aspect-ratio: 16/10;
+  width: 100%; aspect-ratio: 1/1; max-height: 70vh;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden;
 }
 .reader::before, .reader::after,
