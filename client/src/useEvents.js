@@ -4,6 +4,7 @@ import { api } from './api.js'
 const ms = (iso) => Date.parse(iso)
 const statusAt = (e, t) => (t < ms(e.starts_at) ? 'upcoming' : t < ms(e.ends_at) ? 'live' : 'ended')
 const attendanceOpenAt = (e, t) => t >= ms(e.attendance_opens_at || e.starts_at) && t < ms(e.attendance_closes_at || e.ends_at)
+const registrationOpenAt = (e, t) => !e.registration_closed && t < ms(e.ends_at)
 
 // One shared poller for every component that calls useEvents() (the top bar and the page each
 // used to run their own). It runs while anything is subscribed, pauses while the tab is hidden,
@@ -70,6 +71,7 @@ export function useEvents() {
     ...e,
     status: statusAt(e, serverNow),
     attendance_open: attendanceOpenAt(e, serverNow),
+    registration_open: registrationOpenAt(e, serverNow),
   }))
   return { events: withStatus, loading, error, reload: load, serverNow }
 }

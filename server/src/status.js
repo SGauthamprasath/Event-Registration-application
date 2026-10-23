@@ -16,4 +16,9 @@ function attendanceOpen(ev, now = Date.now()) {
   return now >= opens && now < closes;
 }
 
-module.exports = { getStatus, attendanceOpen };
+// Registration stays open until the event ends, unless the control room closed it.
+function registrationOpen(ev, now = Date.now()) {
+  return !ev.registration_closed && now < ms(ev.ends_at);
+}
+
+module.exports = { getStatus, attendanceOpen, registrationOpen };

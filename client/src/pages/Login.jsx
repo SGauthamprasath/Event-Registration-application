@@ -13,6 +13,7 @@ export default function Login() {
   const [code, setCode] = useState('')
   const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [shared, setShared] = useState(false) // true = typing the shared venue code, not an emailed one
 
   // Only used for the domain hint — safe to call unauthenticated.
   useEffect(() => {
@@ -23,6 +24,18 @@ export default function Login() {
   if (user) return <Navigate to="/" replace />
 
   const domain = cfg?.domain || 'psgitech.ac.in'
+
+  async function sendEmailCode(norm) {
+    const { error } = await supabase.auth.signInWithOtp({
+      email: norm,
+      // The email carries both a code (6–8 digits, set in Supabase → Auth) and a link; the link returns here.
+      options: { shouldCreateUser: true, emailRedirectTo: `${window.location.origin}/login` },
+    })
+    if (error) throw error
+    setShared(false)
+    setSent(true)
+    setInfo(`We mailed a code to ${norm}. Type it here, or open the link in the email on this device. Check spam too.`)
+  }
 
   async function onSend(e) {
     e?.preventDefault()
@@ -38,15 +51,15 @@ export default function Login() {
           if (!error) return // AuthProvider picks up the session and redirects.
         }
       }
-      const { error } = await supabase.auth.signInWithOtp({
-        email: norm,
-        // The email carries both a code (6–8 digits, set in Supabase → Auth) and a link; the link returns here.
-        options: { shouldCreateUser: true, emailRedirectTo: `${window.location.origin}/login` },
-      })
-      if (error) throw error
       setEmail(norm)
-      setSent(true)
-      setInfo(`We mailed a code to ${norm}. Type it here, or open the link in the email on this device. Check spam too.`)
+      // While the shared venue code is on, first-timers type that instead of waiting for an email.
+      if (cfg?.staticCode && !sent) {
+        setShared(true)
+        setSent(true)
+        setInfo('Enter the sign-in code announced at the venue.')
+        return
+      }
+      await sendEmailCode(norm)
     } catch (err) {
       setError(err.message || 'Could not send code.')
     } finally {
@@ -58,8 +71,22 @@ export default function Login() {
     e.preventDefault()
     setError(''); setBusy(true)
     try {
+      const norm = email.trim().toLowerCase()
+      if (shared) {
+        let d
+        try {
+          d = await api('/code-login', { method: 'POST', body: { email: norm, code: code.trim() } })
+        } catch (err) {
+          // Teachers can't use the shared code: send them a real one instead.
+          if (err.status === 403) { setCode(''); await sendEmailCode(norm); return }
+          throw err
+        }
+        const { error } = await supabase.auth.verifyOtp({ token_hash: d.token_hash, type: 'magiclink' })
+        if (error) throw error
+        return
+      }
       const { error } = await supabase.auth.verifyOtp({
-        email: email.trim().toLowerCase(),
+        email: norm,
         token: code.trim(),
         type: 'email',
       })
@@ -103,19 +130,21 @@ export default function Login() {
         ) : (
           <form onSubmit={onVerify} className="stack" style={{ marginTop: 8 }}>
             <div className="field">
-              <span className="label">Verification code</span>
-              <input className="input mono" inputMode="numeric" autoComplete="one-time-code"
-                pattern="\d{6,8}" maxLength={8} required autoFocus
-                placeholder="Code from the email"
-                value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+              <span className="label">{shared ? 'Sign-in code' : 'Verification code'}</span>
+              <input className="input mono" inputMode={shared ? 'text' : 'numeric'} autoComplete="one-time-code"
+                pattern={shared ? undefined : '\\d{6,8}'} maxLength={shared ? 32 : 8} required autoFocus
+                placeholder={shared ? 'Code announced at the venue' : 'Code from the email'}
+                value={code} onChange={(e) => setCode(shared ? e.target.value : e.target.value.replace(/\D/g, ''))}
                 style={{ letterSpacing: '0.4em', fontSize: 20, textAlign: 'center' }} />
             </div>
             <button className="btn btn-primary btn-block" disabled={busy}>
               {busy ? 'Verifying…' : 'Verify and sign in →'}
             </button>
             <div className="row between small">
-              <button type="button" className="btn-link" onClick={() => onSend()}>Resend code</button>
-              <button type="button" className="btn-link" onClick={() => { setSent(false); setCode(''); setInfo(''); setError('') }}>Use another email</button>
+              {shared
+                ? <button type="button" className="btn-link" onClick={() => { setError(''); sendEmailCode(email.trim().toLowerCase()).catch((err) => setError(err.message)) }}>Email me a code instead</button>
+                : <button type="button" className="btn-link" onClick={() => onSend()}>Resend code</button>}
+              <button type="button" className="btn-link" onClick={() => { setSent(false); setShared(false); setCode(''); setInfo(''); setError('') }}>Use another email</button>
             </div>
           </form>
         )}

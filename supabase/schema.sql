@@ -26,6 +26,8 @@ create table if not exists public.events (
 );
 -- Set by the control room's "Open attendance now"; overrides starts_at for attendance only.
 alter table public.events add column if not exists attendance_opens_at timestamptz;
+-- Control-room switch: registration is open until the event ends unless this is true.
+alter table public.events add column if not exists registration_closed boolean not null default false;
 
 -- 3. registrations — a student registers once per event
 create table if not exists public.registrations (

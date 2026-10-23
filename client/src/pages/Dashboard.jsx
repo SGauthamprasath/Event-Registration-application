@@ -87,9 +87,9 @@ function FeatureEvent({ ev, isTeacher, onRegistered }) {
               <Link className="btn btn-primary" to={`/teacher/events/${ev.id}`}><QrCode /> Open control room</Link>
             ) : (
               <>
-                {ev.status === 'upcoming' && (ev.registered
-                  ? <span className="pill ok"><i className="dot" />Registered</span>
-                  : <button className="btn btn-primary" onClick={register} disabled={busy}>{busy ? 'Registering…' : 'Register'}</button>)}
+                {ev.registered
+                  ? ev.status === 'upcoming' && <span className="pill ok"><i className="dot" />Registered</span>
+                  : ev.registration_open && <button className="btn btn-primary" onClick={register} disabled={busy}>{busy ? 'Registering…' : 'Register'}</button>}
                 {ev.registered && !ev.attended && ev.attendance_open && (
                   <Link className="btn btn-live" to={`/events/${ev.id}/attend`}><QrCode /> Mark attendance</Link>
                 )}
@@ -160,7 +160,7 @@ function EventCard({ ev, isTeacher, onRegistered }) {
         {!isTeacher ? (
           <>
             <Link className="btn btn-ghost btn-sm" to={`/events/${ev.id}`}>Details</Link>
-            {ev.status === 'upcoming' && !ev.registered && (
+            {ev.registration_open && !ev.registered && (
               <button className="btn btn-primary btn-sm" onClick={register} disabled={busy}>{busy ? '…' : 'Register'}</button>
             )}
             {ev.status === 'upcoming' && ev.registered && <span className="pill ok"><i className="dot" />You're in</span>}
@@ -169,6 +169,7 @@ function EventCard({ ev, isTeacher, onRegistered }) {
             )}
             {ev.status !== 'ended' && ev.attended && <span className="pill ok"><i className="dot" />Checked in</span>}
             {ev.status === 'ended' && (ev.attended ? <span className="pill ok">You attended</span> : ev.registered ? <span className="muted small">Not marked present</span> : <span className="muted small">Ended</span>)}
+            {ev.status !== 'ended' && !ev.registered && !ev.registration_open && <span className="muted small">Registration closed</span>}
           </>
         ) : (
           <>

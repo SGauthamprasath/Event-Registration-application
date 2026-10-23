@@ -57,9 +57,9 @@ export default function EventDetail() {
           {ev.description && <p className="ed-lede">{ev.description}</p>}
 
           <div className="ed-cta-row">
-            {!isTeacher && ev.status === 'upcoming' && (ev.registered
-              ? <span className="pill ok"><i className="dot" />You're registered</span>
-              : <button className="btn btn-primary" onClick={register} disabled={busy}>{busy ? 'Registering…' : 'Register'}</button>)}
+            {!isTeacher && ev.registered && ev.status === 'upcoming' && <span className="pill ok"><i className="dot" />You're registered</span>}
+            {!isTeacher && !ev.registered && ev.registration_open && <button className="btn btn-primary" onClick={register} disabled={busy}>{busy ? 'Registering…' : 'Register'}</button>}
+            {!isTeacher && !ev.registered && !ev.registration_open && ev.status !== 'ended' && <span className="pill">Registration closed</span>}
             {!isTeacher && ev.registered && !ev.attended && ev.attendance_open && (
               <Link className="btn btn-live" to={`/events/${ev.id}/attend`}><QrCode /> Mark attendance</Link>
             )}

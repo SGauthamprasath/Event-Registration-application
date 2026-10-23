@@ -1,6 +1,7 @@
 // index.js - the API, now backed by Supabase Postgres. Each route does cheap checks
 // first and relies on database constraints for the final word on duplicates.
 require('dotenv').config();
+const crypto = require('crypto');
 
 for (const k of ['QR_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) {
   if (!process.env[k]) {
@@ -17,7 +18,7 @@ const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
 const supabase = require('./supabase');
 const auth = require('./auth');
-const { getStatus, attendanceOpen } = require('./status');
+const { getStatus, attendanceOpen, registrationOpen } = require('./status');
 const { checkToken, currentToken } = require('./qr');
 
 const app = express();
@@ -34,7 +35,7 @@ const UNIQUE_VIOLATION = '23505';
 
 // ---------- config ----------
 app.get('/api/config', (req, res) => {
-  res.json({ domain: auth.DOMAIN, supabaseUrl: process.env.SUPABASE_URL });
+  res.json({ domain: auth.DOMAIN, supabaseUrl: process.env.SUPABASE_URL, staticCode: !!staticCode() });
 });
 
 // ---------- quick login ----------
@@ -67,6 +68,31 @@ app.post('/api/quick-login', quickLimiter, asyncSafe(async (req, res) => {
   if (error || !data?.properties?.hashed_token) return no();
   // "Verified before" for a teacher = has actually signed in with an emailed code at least once.
   if (teacher && !data.user?.last_sign_in_at) return no();
+  res.json({ token_hash: data.properties.hashed_token });
+}));
+
+// ---------- shared sign-in code ----------
+// While login emails are unreliable, first-time students sign in with one code announced in the
+// hall (STATIC_LOGIN_CODE) instead of an emailed one. Unset it and the emailed code is back.
+// Teachers never use it.
+const staticCode = () => (process.env.STATIC_LOGIN_CODE || '').trim();
+const sameCode = (a, b) => {
+  const x = crypto.createHash('sha256').update(a).digest();
+  const y = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(x, y);
+};
+
+app.post('/api/code-login', quickLimiter, asyncSafe(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const code = String(req.body.code || '').trim();
+  const expected = staticCode();
+  if (!expected || !auth.isCollegeEmail(email) || auth.isTeacher(email)) return res.status(403).json({ error: 'Use the code from your email' });
+  if (!sameCode(code, expected)) return res.status(400).json({ error: 'Wrong code' }); // not 401: the client treats 401 as an expired session
+  // New students get an already-confirmed account; existing ones just get a fresh sign-in token.
+  const { error: createErr } = await supabase.auth.admin.createUser({ email, email_confirm: true });
+  if (createErr && !/already/i.test(createErr.message)) throw createErr;
+  const { data, error } = await supabase.auth.admin.generateLink({ type: 'magiclink', email });
+  if (error || !data?.properties?.hashed_token) throw error || new Error('no token');
   res.json({ token_hash: data.properties.hashed_token });
 }));
 
@@ -179,6 +205,7 @@ app.get('/api/events', requireUser, asyncSafe(async (req, res) => {
       checked_in: attCount.get(e.id) || 0,
       status: getStatus(e, now),
       attendance_open: attendanceOpen(e, now),
+      registration_open: registrationOpen(e, now),
     })),
   });
 }));
@@ -227,6 +254,16 @@ app.post('/api/events/:id/attendance', requireTeacher, asyncSafe(async (req, res
   res.json({ attendance_open: attendanceOpen({ ...ev, ...patch }, now) });
 }));
 
+// Control-room switch for registration (it is otherwise open until the event ends).
+app.post('/api/events/:id/registration', requireTeacher, asyncSafe(async (req, res) => {
+  const ev = await getEvent(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'Event not found' });
+  const { error } = await supabase.from('events').update({ registration_closed: !req.body.open }).eq('id', ev.id);
+  if (error) throw error;
+  dropSnapshot();
+  res.json({ registration_open: registrationOpen({ ...ev, registration_closed: !req.body.open }) });
+}));
+
 app.delete('/api/events/:id', requireTeacher, asyncSafe(async (req, res) => {
   const { error } = await supabase.from('events').delete().eq('id', Number(req.params.id));
   if (error) throw error;
@@ -238,7 +275,7 @@ app.delete('/api/events/:id', requireTeacher, asyncSafe(async (req, res) => {
 app.post('/api/events/:id/register', requireUser, requireProfile, asyncSafe(async (req, res) => {
   const ev = await getEvent(req.params.id);
   if (!ev) return res.status(404).json({ error: 'Event not found' });
-  if (getStatus(ev) !== 'upcoming') return res.status(403).json({ error: 'Registration is closed' });
+  if (!registrationOpen(ev)) return res.status(403).json({ error: 'Registration is closed' });
   const { error } = await supabase.from('registrations').insert({ event_id: ev.id, email: req.user.email });
   if (error) {
     if (error.code === UNIQUE_VIOLATION) return res.status(409).json({ error: 'Already registered' });
