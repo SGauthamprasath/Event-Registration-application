@@ -41,9 +41,11 @@ app.get('/api/config', (req, res) => {
 // A student who has verified by email once (and finished their profile) can sign in again with
 // just their email: the server mints a one-time sign-in token via the admin API (no email sent)
 // and the client exchanges it for a session. This trades security for fewer emails: anyone who
-// knows a verified student's email can sign in as them. Teachers always need the emailed code.
-// Turn it off with QUICK_LOGIN=0 on the server.
+// knows a verified student's email can sign in as them. Teachers (admins) who have signed in
+// once get the same shortcut, so anyone who knows a teacher email gets the control room.
+// Turn it off with QUICK_LOGIN=0 (everyone) or TEACHER_QUICK_LOGIN=0 (teachers only).
 const quickLoginOn = () => process.env.QUICK_LOGIN !== '0';
+const teacherQuickLoginOn = () => process.env.TEACHER_QUICK_LOGIN !== '0';
 const quickLimiter = rateLimit({
   windowMs: 10 * 60_000,
   limit: 10,
@@ -55,11 +57,16 @@ const quickLimiter = rateLimit({
 app.post('/api/quick-login', quickLimiter, asyncSafe(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const no = () => res.json({ token_hash: null }); // client falls back to the emailed code
-  if (!quickLoginOn() || !auth.isCollegeEmail(email) || auth.isTeacher(email)) return no();
+  if (!quickLoginOn() || !auth.isCollegeEmail(email)) return no();
+  const teacher = auth.isTeacher(email);
+  if (teacher && !teacherQuickLoginOn()) return no();
   const profile = await auth.loadProfile(email);
-  if (!auth.profileComplete(profile)) return no();
+  // Teachers don't fill the student profile form; a profile row is enough to start with.
+  if (teacher ? !profile : !auth.profileComplete(profile)) return no();
   const { data, error } = await supabase.auth.admin.generateLink({ type: 'magiclink', email });
   if (error || !data?.properties?.hashed_token) return no();
+  // "Verified before" for a teacher = has actually signed in with an emailed code at least once.
+  if (teacher && !data.user?.last_sign_in_at) return no();
   res.json({ token_hash: data.properties.hashed_token });
 }));
 
