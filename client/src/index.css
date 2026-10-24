@@ -999,6 +999,11 @@ p { margin: 0 0 10px; color: var(--ink-2); }
 .reader > span { position: absolute; inset: 0; pointer-events: none; }
 .reader > span::before { bottom: 14px; left: 14px; border-right: 0; border-top: 0; border-bottom-left-radius: 6px; }
 .reader > span::after { bottom: 14px; right: 14px; border-left: 0; border-top: 0; border-bottom-right-radius: 6px; }
+.reader { touch-action: none; } /* pinch here zooms the camera, not the page */
+.zoom-row { display: flex; align-items: center; gap: 10px; }
+.zoom-row .btn { min-width: 40px; font-size: 18px; line-height: 1; }
+.zoom-range { flex: 1; accent-color: var(--primary); height: 28px; }
+.zoom-val { min-width: 42px; text-align: right; color: var(--ink); }
 .reader > div, .reader video, .reader canvas { width: 100% !important; height: 100% !important; object-fit: cover; }
 
 .result {
