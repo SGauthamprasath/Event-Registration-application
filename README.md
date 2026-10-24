@@ -135,6 +135,6 @@ request, so it cannot be forged from the browser. Middleware: `requireUser`, `re
   manual check-in, CSV download.
 
 ## 6. What this cannot prevent
-A friend inside the hall can photograph the projected QR and send it to someone outside within the ~20 second window.
+A friend inside the hall can photograph the projected QR and send it to someone outside within the ~15 second window.
 The rotating code, one-device-per-event rule, logged IP/device, and a teacher's headcount make that hard and visible,
 not impossible. The IP and device are stored in the `attendance` table for review.

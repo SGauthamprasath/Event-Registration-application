@@ -95,7 +95,7 @@ export default function Attend() {
         </div>
       )}
 
-      <p className="muted small" style={{ textAlign: 'center' }}>The code rotates every ~20 seconds, so a photo won't work.</p>
+      <p className="muted small" style={{ textAlign: 'center' }}>The code changes every 15 seconds, so a photo won't work.</p>
 
       <Link className="btn btn-ghost btn-block" to="/"><Back style={{ width: 14, height: 14 }} /> Back to events</Link>
     </div>

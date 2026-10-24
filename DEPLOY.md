@@ -37,7 +37,7 @@ Written for the actual event day. ~15 minutes end to end.
    - `SUPABASE_SERVICE_ROLE_KEY=<service_role>`
    - `COLLEGE_DOMAIN=psgitech.ac.in`
    - `TEACHER_EMAILS=teacher1@psgitech.ac.in,teacher2@psgitech.ac.in`
-   - `QR_WINDOW_SECONDS=20` (`0` = fixed code, no rotation)
+   - `QR_WINDOW_SECONDS=15` (`0` = fixed code, no rotation)
    - `CORS_ORIGIN=https://<your-vercel-domain>.vercel.app` (fill in after step 2)
 4. Deploy. Grab the URL — e.g. `https://campus-events-api.onrender.com`. Hit `/api/events` with a browser — expect `{"error":"Please log in again"}` (correct: that endpoint requires auth).
 

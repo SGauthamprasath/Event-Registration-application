@@ -11,12 +11,22 @@ function useRotatingQr(eventId, enabled) {
   useEffect(() => {
     if (!enabled) { setQr(null); return }
     let timer, stop = false
+    // Show the current code, flip to the pre-sent next one the moment it becomes valid, then
+    // fetch again in the background for the one after. The switch never waits on the network.
     async function tick() {
       try {
+        const sent = Date.now()
         const d = await api(`/events/${eventId}/qr`)
         if (stop) return
-        setQr({ ...d, startedAt: Date.now() }); setClosed(false)
-        timer = setTimeout(tick, Math.max(800, d.expiresInMs + 150))
+        setQr(d); setClosed(false)
+        if (!d.next) { timer = setTimeout(tick, d.expiresInMs); return }
+        // Half the round trip is roughly how stale expiresInMs already is.
+        const flipIn = Math.max(0, d.expiresInMs - (Date.now() - sent) / 2)
+        timer = setTimeout(() => {
+          if (stop) return
+          setQr({ ...d, token: d.next })
+          timer = setTimeout(tick, 1000) // fetch after the server is safely into the new slot
+        }, flipIn)
       } catch {
         if (stop) return
         setClosed(true); timer = setTimeout(tick, 3000)
