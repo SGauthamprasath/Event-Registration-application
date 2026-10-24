@@ -64,8 +64,12 @@ async function downloadBlob(path, filename) {
   URL.revokeObjectURL(url)
 }
 
-export const downloadCsv = (eventId, title) =>
-  downloadBlob(`/events/${eventId}/export.csv`, `${title.replace(/[^a-z0-9]+/gi, '_')}_attendance.csv`)
+// year = 1-4 for one year of study's sheet, omitted for everyone.
+export const downloadCsv = (eventId, title, year) =>
+  downloadBlob(
+    `/events/${eventId}/export.csv${year ? `?year=${year}` : ''}`,
+    `${title.replace(/[^a-z0-9]+/gi, '_')}${year ? `_year${year}` : ''}_attendance.csv`,
+  )
 
 export const downloadAllStudentsCsv = () =>
   downloadBlob('/admin/students.csv', 'all_students.csv')

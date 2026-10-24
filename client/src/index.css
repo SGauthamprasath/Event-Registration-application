@@ -947,6 +947,11 @@ p { margin: 0 0 10px; color: var(--ink-2); }
 .ingest .ig-foot { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 11px; color: var(--mono-dim); letter-spacing: 0.04em; padding-top: 10px; border-top: 1px dashed var(--line); }
 
 /* manual override card */
+.year-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.year-table th { text-align: left; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500; padding: 6px 4px; }
+.year-table td { padding: 6px 4px; border-top: 1px solid var(--line); }
+.year-table .num { font-variant-numeric: tabular-nums; }
+.year-table .btn svg { width: 14px; height: 14px; }
 .override {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 20px;
   display: flex; flex-direction: column; gap: 12px;

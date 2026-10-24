@@ -346,7 +346,25 @@ async function eventStats(eventId) {
     supabase.from('registrations').select('*', { count: 'exact', head: true }).eq('event_id', eventId),
     supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('event_id', eventId),
   ]);
-  return { registered, attended, absent: Math.max(0, registered - attended) };
+  return { registered, attended, absent: Math.max(0, registered - attended), byYear: await yearBreakdown(eventId) };
+}
+
+// Registered / attended per year of study, for the control room's year-wise table.
+async function yearBreakdown(eventId) {
+  const [{ data: regs = [] }, { data: atts = [] }] = await Promise.all([
+    supabase.from('registrations').select('email, profiles!inner(year)').eq('event_id', eventId),
+    supabase.from('attendance').select('email').eq('event_id', eventId),
+  ]);
+  const present = new Set(atts.map((a) => a.email));
+  const rows = new Map();
+  for (const r of regs) {
+    const year = r.profiles?.year || 0; // 0 = profile without a year
+    const row = rows.get(year) || { year, registered: 0, attended: 0 };
+    row.registered++;
+    if (present.has(r.email)) row.attended++;
+    rows.set(year, row);
+  }
+  return [...rows.values()].sort((a, b) => a.year - b.year);
 }
 
 app.get('/api/events/:id/stats', requireTeacher, asyncSafe(async (req, res) => {
@@ -390,6 +408,8 @@ app.get('/api/events/:id/export.csv', requireTeacher, asyncSafe(async (req, res)
     .from('registrations')
     .select('registered_at, email, profiles!inner(email, name, department, year, roll_no)')
     .eq('event_id', ev.id);
+  // ?year=2 limits the sheet to one year of study.
+  const year = Number(req.query.year) || null;
   const { data: atts = [] } = await supabase.from('attendance').select('email, marked_at, method').eq('event_id', ev.id);
   const attByEmail = new Map(atts.map((a) => [a.email, a]));
 
@@ -399,6 +419,7 @@ app.get('/api/events/:id/export.csv', requireTeacher, asyncSafe(async (req, res)
       year: r.profiles?.year, email: r.email, registered_at: r.registered_at,
       att: attByEmail.get(r.email),
     }))
+    .filter((r) => !year || r.year === year)
     .sort((a, b) => String(a.roll_no || '').localeCompare(String(b.roll_no || '')));
 
   const header = ['Roll No', 'Name', 'Department', 'Year', 'Email', 'Registered At (IST)', 'Status', 'Marked At (IST)', 'Method'];
@@ -412,7 +433,7 @@ app.get('/api/events/:id/export.csv', requireTeacher, asyncSafe(async (req, res)
 
   const safeName = ev.title.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '').slice(0, 50) || 'event';
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${safeName}_attendance.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}${year ? `_year${year}` : ''}_attendance.csv"`);
   res.send('﻿' + lines.join('\r\n'));
 }));
 

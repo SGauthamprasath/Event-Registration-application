@@ -195,6 +195,31 @@ export default function TeacherEvent() {
             </div>
           </div>
 
+          <div className="override">
+            <div className="oh">
+              <span className="tag ink-2">Year-wise attendance</span>
+              <span className="tag">Live</span>
+            </div>
+            <table className="year-table">
+              <thead><tr><th>Year</th><th>Registered</th><th>Attended</th><th>Turnout</th><th /></tr></thead>
+              <tbody>
+                {(stats?.byYear || []).map((r) => (
+                  <tr key={r.year}>
+                    <td>{r.year ? `Year ${r.year}` : 'Not set'}</td>
+                    <td className="num">{r.registered}</td>
+                    <td className="num">{r.attended}</td>
+                    <td className="num">{r.registered ? Math.round((r.attended / r.registered) * 100) : 0}%</td>
+                    <td>{r.year > 0 && (
+                      <button type="button" className="btn btn-ghost btn-sm" title={`Download Year ${r.year} CSV`}
+                        onClick={() => downloadCsv(ev.id, ev.title, r.year)}><Download /></button>
+                    )}</td>
+                  </tr>
+                ))}
+                {stats && !stats.byYear?.length && <tr><td colSpan={5} className="muted small">No registrations yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+
           <form className="override" onSubmit={manual}>
             <div className="oh">
               <span className="tag ink-2">Manual check-in</span>
