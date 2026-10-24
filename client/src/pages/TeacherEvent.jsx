@@ -18,13 +18,16 @@ function useRotatingQr(eventId, enabled) {
         const sent = Date.now()
         const d = await api(`/events/${eventId}/qr`)
         if (stop) return
-        setQr(d); setClosed(false)
-        if (!d.next) { timer = setTimeout(tick, d.expiresInMs); return }
+        setClosed(false)
+        if (!d.next) { setQr(d); timer = setTimeout(tick, d.expiresInMs); return }
         // Half the round trip is roughly how stale expiresInMs already is.
         const flipIn = Math.max(0, d.expiresInMs - (Date.now() - sent) / 2)
+        // barDelay starts the countdown bar part-way through when we join mid-window. A refetch of
+        // the code already on screen keeps the old value, or the running bar would jump.
+        setQr((prev) => prev?.token === d.token ? { ...d, barDelay: prev.barDelay } : { ...d, barDelay: flipIn - d.windowMs })
         timer = setTimeout(() => {
           if (stop) return
-          setQr({ ...d, token: d.next })
+          setQr({ ...d, token: d.next, barDelay: 0 })
           timer = setTimeout(tick, 1000) // fetch after the server is safely into the new slot
         }, flipIn)
       } catch {
@@ -149,6 +152,11 @@ export default function TeacherEvent() {
               <div className="qr-tile">
                 <QRCodeSVG value={qr.token} size={320} marginSize={0} />
               </div>
+              {qr.windowMs > 0 && (
+                <div className="qr-bar" aria-hidden>
+                  <i key={qr.token} style={{ animationDuration: `${qr.windowMs}ms`, animationDelay: `${qr.barDelay || 0}ms` }} />
+                </div>
+              )}
 
             </div>
           ) : (

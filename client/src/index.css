@@ -901,6 +901,11 @@ p { margin: 0 0 10px; color: var(--ink-2); }
 }
 .qr-stage .qs-closed .ttl { font-family: var(--font-display); font-weight: 500; font-size: 22px; text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 8px; }
 
+/* Countdown to the next code: drains over one window, refills when the code switches. */
+.qr-stage .qr-bar { width: 100%; max-width: 356px; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.qr-stage .qr-bar i { display: block; height: 100%; background: var(--primary); border-radius: inherit; transform-origin: left; animation: qr-drain linear both; }
+@keyframes qr-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
 /* Projector mode: the QR fills as much of the screen as it can, centred both ways. */
 .qr-stage:fullscreen {
   border: 0; border-radius: 0; padding: 3vh 3vw; justify-content: center;
@@ -914,6 +919,7 @@ p { margin: 0 0 10px; color: var(--ink-2); }
 .qr-stage:fullscreen .qr-tile { padding: 2.5vh; border-radius: 2vh; }
 .qr-stage:fullscreen .qr-tile svg { width: min(82vh, 90vw); height: min(82vh, 90vw); }
 .qr-stage:fullscreen .qs-closed .ttl { font-size: 5vh; }
+.qr-stage:fullscreen .qr-bar { max-width: min(87vh, 95vw); height: 1.2vh; }
 .qr-stage:fullscreen .qs-note { justify-content: center; text-align: center; border-top: 0; padding-top: 0; }
 .qr-stage:fullscreen .qs-note span { font-size: 2.2vh; }
 
