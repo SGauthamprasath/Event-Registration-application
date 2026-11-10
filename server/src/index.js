@@ -20,6 +20,7 @@ const supabase = require('./supabase');
 const auth = require('./auth');
 const { getStatus, attendanceOpen, registrationOpen } = require('./status');
 const { checkToken, currentToken } = require('./qr');
+const brochures = require('./brochures');
 
 const app = express();
 app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
@@ -123,7 +124,6 @@ app.put('/api/me', requireUser, asyncSafe(async (req, res) => {
 }));
 
 // ---------- events ----------
-const isHttpUrl = (s) => { try { return ['http:', 'https:'].includes(new URL(s).protocol); } catch { return false; } };
 
 function parseEventBody(b) {
   const title = String(b.title || '').trim().slice(0, 200);
@@ -134,7 +134,8 @@ function parseEventBody(b) {
   if (!title) return { error: 'Title is required' };
   if (!valid(b.starts_at) || !valid(b.ends_at)) return { error: 'Valid start and end times are required' };
   if (Date.parse(b.ends_at) <= Date.parse(b.starts_at)) return { error: 'End time must be after start time' };
-  if (brochure_url && !isHttpUrl(brochure_url) && !brochure_url.startsWith('/')) return { error: 'Brochure must be an http(s) link or a /path' };
+  // Brochures are uploaded images (our storage bucket); a /path is a poster bundled with the site.
+  if (brochure_url && !brochures.isOurs(brochure_url) && !/^\/(?!\/)[\w\-./]+$/.test(brochure_url)) return { error: 'Upload the brochure as an image' };
   let closes = null;
   if (b.attendance_closes_at) {
     if (!valid(b.attendance_closes_at)) return { error: 'Invalid attendance close time' };
@@ -219,13 +220,34 @@ app.post('/api/events', requireTeacher, asyncSafe(async (req, res) => {
   res.json({ id: data.id });
 }));
 
+// Teacher uploads a brochure image (raw bytes, already resized to WebP by the browser).
+// The URL it returns goes into the event form; the event save is what links it to an event.
+app.post('/api/brochures', requireTeacher,
+  express.raw({ type: ['image/*', 'application/octet-stream'], limit: brochures.MAX_BYTES }),
+  asyncSafe(async (req, res) => {
+    const { url, error } = await brochures.upload(Buffer.isBuffer(req.body) ? req.body : null);
+    if (error) return res.status(400).json({ error });
+    res.json({ url });
+  }));
+
+// Undo an upload whose event was never saved (the form calls this when the save fails).
+app.delete('/api/brochures', requireTeacher, asyncSafe(async (req, res) => {
+  const url = String(req.body?.url || '');
+  const { events } = await getSnapshot();
+  if (brochures.isOurs(url) && !events.some((e) => e.brochure_url === url)) await brochures.remove(url);
+  res.json({ ok: true });
+}));
+
 app.put('/api/events/:id', requireTeacher, asyncSafe(async (req, res) => {
   const { value, error } = parseEventBody(req.body);
   if (error) return res.status(400).json({ error });
+  const before = await getEvent(req.params.id);
   const { data, error: dbErr } = await supabase.from('events').update(value).eq('id', Number(req.params.id)).select('id').maybeSingle();
   if (dbErr) throw dbErr;
   dropSnapshot();
   if (!data) return res.status(404).json({ error: 'Event not found' });
+  // A replaced or removed brochure leaves the bucket.
+  if (before?.brochure_url && before.brochure_url !== value.brochure_url) await brochures.remove(before.brochure_url);
   res.json({ ok: true });
 }));
 
@@ -267,9 +289,10 @@ app.post('/api/events/:id/registration', requireTeacher, asyncSafe(async (req, r
 }));
 
 app.delete('/api/events/:id', requireTeacher, asyncSafe(async (req, res) => {
-  const { error } = await supabase.from('events').delete().eq('id', Number(req.params.id));
+  const { data: gone, error } = await supabase.from('events').delete().eq('id', Number(req.params.id)).select('brochure_url');
   if (error) throw error;
   dropSnapshot();
+  for (const e of gone || []) await brochures.remove(e.brochure_url);
   res.json({ ok: true });
 }));
 

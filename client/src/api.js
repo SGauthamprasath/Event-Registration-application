@@ -21,13 +21,15 @@ async function authHeader() {
 }
 
 export async function api(path, { method = 'GET', body, raw } = {}) {
+  // A Blob (an image upload) goes as raw bytes; anything else as JSON.
+  const isBlob = body instanceof Blob
   const send = async () => fetch(API_BASE + '/api' + path, {
     method,
     headers: {
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(body ? { 'Content-Type': isBlob ? body.type || 'application/octet-stream' : 'application/json' } : {}),
       ...(await authHeader()),
     },
-    body: body ? JSON.stringify(body) : undefined,
+    body: body ? (isBlob ? body : JSON.stringify(body)) : undefined,
   })
   let res = await send()
   // A 401 can just mean the access token expired while the phone slept. Refresh and retry once;

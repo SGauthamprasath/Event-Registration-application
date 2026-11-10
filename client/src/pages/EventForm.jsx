@@ -3,6 +3,24 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api.js'
 import { Back, Trash } from '../icons.jsx'
 
+// Shrink the picked image in the browser before upload: at most 1200 px wide, WebP (JPEG on
+// browsers that can't encode WebP). A 5 MB phone photo becomes ~200 KB.
+const MAX_W = 1200
+async function compressImage(file) {
+  const bmp = await createImageBitmap(file)
+  const scale = Math.min(1, MAX_W / bmp.width)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(bmp.width * scale)
+  canvas.height = Math.round(bmp.height * scale)
+  canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height)
+  bmp.close?.()
+  const encode = (type, q) => new Promise((ok) => canvas.toBlob(ok, type, q))
+  let blob = await encode('image/webp', 0.82)
+  if (!blob || blob.type !== 'image/webp') blob = await encode('image/jpeg', 0.85)
+  if (!blob) throw new Error('Could not read that image')
+  return blob
+}
+
 const toUtc = (local) => (local ? new Date(local).toISOString() : '')
 const toLocalInput = (iso) => {
   if (!iso) return ''
@@ -16,6 +34,7 @@ export default function EventForm() {
   const [f, setF] = useState({ title: '', description: '', venue: '', brochure_url: '', starts_at: '', ends_at: '', attendance_closes_at: '' })
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [image, setImage] = useState(null) // { blob, preview } waiting to upload on save
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
 
   useEffect(() => {
@@ -29,15 +48,38 @@ export default function EventForm() {
     })
   }, [id])
 
+  useEffect(() => () => image && URL.revokeObjectURL(image.preview), [image])
+
+  async function pickImage(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setError('')
+    if (!file.type.startsWith('image/')) return setError('Pick an image file (JPG, PNG or WebP).')
+    try {
+      const blob = await compressImage(file)
+      setImage({ blob, preview: URL.createObjectURL(blob) })
+    } catch (err) { setError(err.message) }
+  }
+
+  // The image is only uploaded on save, so a cancelled form leaves nothing in storage.
   async function submit(e) {
     e.preventDefault()
     setError(''); setSaving(true)
-    const body = { ...f, starts_at: toUtc(f.starts_at), ends_at: toUtc(f.ends_at), attendance_closes_at: toUtc(f.attendance_closes_at) }
+    let uploaded = null
     try {
+      if (image) uploaded = (await api('/brochures', { method: 'POST', body: image.blob })).url
+      const body = {
+        ...f, brochure_url: uploaded || f.brochure_url,
+        starts_at: toUtc(f.starts_at), ends_at: toUtc(f.ends_at), attendance_closes_at: toUtc(f.attendance_closes_at),
+      }
       if (id) await api(`/events/${id}`, { method: 'PUT', body })
       else await api('/events', { method: 'POST', body })
       nav('/')
-    } catch (err) { setError(err.message) }
+    } catch (err) {
+      if (uploaded) api('/brochures', { method: 'DELETE', body: { url: uploaded } }).catch(() => {})
+      setError(err.message)
+    }
     setSaving(false)
   }
 
@@ -74,15 +116,22 @@ export default function EventForm() {
             <input className="input" value={f.venue} onChange={set('venue')} placeholder="Newton Hall" />
           </div>
           <div className="field">
-            <span className="label">Brochure URL</span>
-            <input className="input mono" type="url" value={f.brochure_url} onChange={set('brochure_url')} placeholder="https://…" />
+            <span className="label">Brochure image</span>
+            <label className="btn btn-ghost" style={{ justifyContent: 'center', cursor: 'pointer' }}>
+              {image || f.brochure_url ? 'Change image' : 'Choose image'}
+              <input type="file" accept="image/*" onChange={pickImage} hidden />
+            </label>
+            <span className="help">JPG, PNG or WebP. It's resized before upload.</span>
           </div>
         </div>
 
-        {f.brochure_url && (
+        {(image || f.brochure_url) && (
           <div className="card-inset" style={{ padding: 10, maxWidth: 260 }}>
-            <div className="tag" style={{ marginBottom: 6 }}>Preview</div>
-            <img src={f.brochure_url} alt="" style={{ width: '100%', borderRadius: 10 }} />
+            <div className="row between" style={{ marginBottom: 6 }}>
+              <span className="tag">Preview{image ? ' · not saved yet' : ''}</span>
+              <button type="button" className="btn-link small" onClick={() => { setImage(null); setF({ ...f, brochure_url: '' }) }}>Remove</button>
+            </div>
+            <img src={image ? image.preview : f.brochure_url} alt="" style={{ width: '100%', borderRadius: 10 }} />
           </div>
         )}
 
